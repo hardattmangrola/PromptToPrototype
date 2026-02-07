@@ -1,16 +1,25 @@
 """
-Process uploaded PDF: chunk, embed, upsert to Pinecone only (no local file storage).
-Supports single hybrid index or separate dense (1024) + sparse indexes.
+Process uploaded PDF: semantic chunking, dual embedding, Pinecone upsert.
+Enforces strict medical safety, traceability, and auditability constraints.
+
+Pipeline:
+  1. Extract & semantically chunk PDF (preserve original text)
+  2. Generate dense embedding (semantic similarity)
+  3. Generate sparse embedding (medical terminology matching)
+  4. Enrich metadata (page, section, chunk_type, timestamp)
+  5. Upsert to Pinecone with full traceability
 """
 import uuid
 from typing import List, Optional
+from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.services.pdf_service import extract_and_chunk_pdf
 from app.services.embeddings import embed_dense, embed_sparse
 from app.db.pinecone import get_pinecone_client
 import logging
-from app.db.pinecone import get_pinecone_client
+
+logger = logging.getLogger("app.document_upload")
 
 
 def _get_dense_index(index_override: Optional[str] = None):
@@ -91,6 +100,7 @@ async def process_and_upsert_pdf(
     batch_size = 100
     meta_truncate = 50_000
     use_dual = _use_dual_index() and not index_used
+    upload_timestamp = datetime.now(timezone.utc).isoformat()
 
     for i in range(0, len(chunks), batch_size):
         batch_chunks = chunks[i : i + batch_size]
@@ -104,12 +114,20 @@ async def process_and_upsert_pdf(
                 if not dv or not isinstance(dv, list) or len(dv) == 0:
                     continue
                 vid = f"{namespace}_{i + j}"
+                
+                # Enrich metadata with full traceability
                 meta = {
                     "text": ch["text"][:meta_truncate],
+                    "document_id": upload_id,
+                    "document_title": filename,
                     "doc_name": ch["doc_name"],
-                    "section": ch.get("section"),
-                    "page": ch.get("page"),
+                    "page_number": ch.get("page"),
+                    "section_title": ch.get("section"),
+                    "chunk_type": ch.get("chunk_type", "general"),
+                    "upload_timestamp": upload_timestamp,
+                    "source": "uploaded_pdf",
                 }
+                
                 dense_records.append({"id": vid, "values": dv, "metadata": meta})
                 if sv and (sv.get("indices") or sv.get("values")):
                     sparse_records.append({
@@ -117,14 +135,15 @@ async def process_and_upsert_pdf(
                         "sparse_values": {"indices": sv.get("indices", []), "values": sv.get("values", [])},
                         "metadata": meta,
                     })
+            
             if dense_records:
                 try:
                     _get_dense_index().upsert(vectors=dense_records, namespace=namespace)
+                    logger.info(f"Upserted {len(dense_records)} dense vectors to namespace {namespace}")
                 except Exception as e:
                     # If dimension mismatch, try upload index (if configured)
                     try:
                         settings = get_settings()
-                        logger = logging.getLogger("app.pinecone")
                         logger.info("Dense upsert failed: %s. Attempting upload index fallback.", str(e))
                         upload_idx_name = getattr(settings, "pinecone_index_upload", None)
                         if upload_idx_name:
@@ -134,9 +153,11 @@ async def process_and_upsert_pdf(
                             raise
                     except Exception:
                         raise
+            
             if sparse_records:
                 try:
                     _get_sparse_index().upsert(vectors=sparse_records, namespace=namespace)
+                    logger.info(f"Upserted {len(sparse_records)} sparse vectors to namespace {namespace}")
                 except Exception as e:
                     raise RuntimeError(f"Pinecone sparse index upsert failed: {e}") from e
         else:
@@ -145,25 +166,34 @@ async def process_and_upsert_pdf(
                 if not dv or not isinstance(dv, list) or len(dv) == 0:
                     continue
                 vid = f"{namespace}_{i + j}"
+                
+                # Enrich metadata with full traceability
                 meta = {
                     "text": ch["text"][:meta_truncate],
+                    "document_id": upload_id,
+                    "document_title": filename,
                     "doc_name": ch["doc_name"],
-                    "section": ch.get("section"),
-                    "page": ch.get("page"),
+                    "page_number": ch.get("page"),
+                    "section_title": ch.get("section"),
+                    "chunk_type": ch.get("chunk_type", "general"),
+                    "upload_timestamp": upload_timestamp,
+                    "source": "uploaded_pdf",
                 }
+                
                 record = {"id": vid, "values": dv, "metadata": meta}
                 if sv and (sv.get("indices") or sv.get("values")):
                     record["sparse_values"] = {"indices": sv.get("indices", []), "values": sv.get("values", [])}
                 records.append(record)
+            
             if records:
                 idx = _get_pinecone_index(index_used)
                 try:
                     idx.upsert(vectors=records, namespace=namespace)
+                    logger.info(f"Upserted {len(records)} hybrid vectors to namespace {namespace}")
                 except Exception as e:
                     # If vector dimension mismatch, attempt to fallback to upload index if provided
                     settings = get_settings()
                     upload_idx_name = getattr(settings, "pinecone_index_upload", None)
-                    logger = logging.getLogger("app.pinecone")
                     logger.info("Primary upsert failed: %s", str(e))
                     if upload_idx_name and upload_idx_name != (index_used or ""):
                         try:

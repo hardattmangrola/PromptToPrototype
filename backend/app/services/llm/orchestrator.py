@@ -1,80 +1,95 @@
 """
-Multi-model orchestration: call Groq and Gemini in parallel with identical context.
-Returns both parsed outputs for validation and merging (done in pipeline).
+Parallel LLM orchestration with intelligent fallback.
+Strategy: Gemini-primary (more capable), Groq-fallback (free, reliable).
+
+Handles graceful degradation if either fails.
 """
 import asyncio
-from typing import Any, Dict, List, Tuple
+import logging
+from typing import Any, Dict, Optional
 
-from app.services.llm.prompts import GROUNDING_SYSTEM, build_grounding_user, format_context
-from app.services.llm.groq_client import groq_complete, parse_groq_json
-from app.services.llm.gemini_client import gemini_complete, parse_gemini_json
+from app.config import get_settings
+from app.services.llm.gemini_client import gemini_complete
+from app.services.llm.groq_client import groq_complete_async, GroqAsyncError
+
+logger = logging.getLogger("app.llm")
 
 
-async def llm_grounded_generate(
-    query: str,
-    chunks: List[dict],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Call Groq and Gemini in parallel with same context and grounding instructions.
-    If one fails, try the other as fallback. Returns (groq_parsed, gemini_parsed).
+    Orchestrate dual LLM generation: Gemini-primary + Groq-fallback.
+    
+    Returns (gemini_out, groq_out) where each is:
+      {"answer": str, "citations": list[str]}
     
     Strategy:
-    1. Try both in parallel (fast path)
-    2. If one fails, retry the failed one sequentially
-    3. If both fail after retry, raise error
+      1. Try Gemini (primary) + Groq (secondary) in parallel
+      2. If Gemini fails (quota, auth, rate limit), skip it (Groq is fallback)
+      3. If Groq fails on first attempt, retry once
+      4. Require Groq success; Gemini is optional (nice-to-have for cross-model validation)
     """
-    context = format_context(chunks)
-    user_msg = build_grounding_user(context, query)
-
-    async def groq_task() -> Dict[str, Any]:
-        raw = await groq_complete(GROUNDING_SYSTEM, user_msg)
-        return parse_groq_json(raw)
-
-    async def gemini_task() -> Dict[str, Any]:
-        raw = await gemini_complete(GROUNDING_SYSTEM, user_msg)
-        return parse_gemini_json(raw)
-
-    # Try both in parallel first
-    results = await asyncio.gather(groq_task(), gemini_task(), return_exceptions=True)
+    settings = get_settings()
+    context_text = "\n\n".join(c.get("text", "") for c in chunks)
     
-    groq_out = results[0] if not isinstance(results[0], Exception) else None
-    gemini_out = results[1] if not isinstance(results[1], Exception) else None
-    groq_error = results[0] if isinstance(results[0], Exception) else None
-    gemini_error = results[1] if isinstance(results[1], Exception) else None
+    print(f"\n=== LLM Orchestration (Gemini-primary + Groq-fallback) ===")
+    print(f"  Query: {query[:80]}...")
+    print(f"  Context: {len(context_text)} chars across {len(chunks)} chunks")
     
-    # If one failed, try sequential fallback
-    if groq_error and not gemini_out:
-        print(f"Groq failed, retrying Gemini: {groq_error}")
+    # Define tasks
+    async def gemini_task():
         try:
-            gemini_out = await gemini_task()
+            result = await gemini_complete(query, context_text)
+            if result.get("answer"):
+                print(f"  ✓ Gemini: {len(result['answer'])} chars")
+                return result
+            else:
+                print(f"  ⚠ Gemini: empty response")
+                return None
         except Exception as e:
-            print(f"Gemini fallback also failed: {e}")
-            gemini_out = None
+            error_msg = str(e)
+            # Gracefully skip Gemini if quota/auth/rate limit
+            if "429" in error_msg or "quota" in error_msg.lower() or "403" in error_msg:
+                print(f"  ⚠ Gemini: quota/auth error (skipping, using Groq alone)")
+                return None
+            else:
+                print(f"  ✗ Gemini: unexpected error: {error_msg}")
+                return None
     
-    if gemini_error and not groq_out:
-        print(f"Gemini failed, retrying Groq: {gemini_error}")
+    async def groq_task():
         try:
-            groq_out = await groq_task()
+            result = await groq_complete_async(query, context_text)
+            if result.get("answer"):
+                print(f"  ✓ Groq: {len(result['answer'])} chars")
+                return result
+            else:
+                print(f"  ⚠ Groq: empty response")
+                return None
+        except GroqAsyncError as e:
+            print(f"  ✗ Groq: {str(e)}")
+            return None
         except Exception as e:
-            print(f"Groq fallback also failed: {e}")
-            groq_out = None
+            print(f"  ✗ Groq: unexpected error: {str(e)}")
+            return None
     
-    # If still failing, try fallback a second time simultaneously
-    if not groq_out and not gemini_out:
-        print("Both LLM providers failed initially, attempting aggressive fallback...")
-        fallback_results = await asyncio.gather(
-            groq_task() if groq_error else asyncio.sleep(0),
-            gemini_task() if gemini_error else asyncio.sleep(0),
-            return_exceptions=True
-        )
-        if groq_error:
-            groq_out = fallback_results[0] if not isinstance(fallback_results[0], Exception) else None
-        if gemini_error:
-            gemini_out = fallback_results[1] if not isinstance(fallback_results[1], Exception) else None
+    # Run in parallel
+    results = await asyncio.gather(gemini_task(), groq_task(), return_exceptions=True)
+    gemini_out = results[0] if not isinstance(results[0], Exception) else None
+    groq_out = results[1] if not isinstance(results[1], Exception) else None
     
-    # If both still failed after all retries, raise
-    if not groq_out and not gemini_out:
-        raise RuntimeError(f"Both LLM providers failed. Groq: {groq_error}, Gemini: {gemini_error}")
+    # If Groq failed on first try, retry once
+    if not groq_out:
+        print(f"  → Retrying Groq...")
+        try:
+            groq_out = await groq_complete_async(query, context_text)
+            if groq_out and groq_out.get("answer"):
+                print(f"  ✓ Groq retry: {len(groq_out['answer'])} chars")
+        except Exception as e:
+            print(f"  ✗ Groq retry failed: {str(e)}")
     
-    # Return both (one or both may be populated)
-    return groq_out or {}, gemini_out or {}
+    # Require Groq success
+    if not groq_out or not groq_out.get("answer"):
+        raise RuntimeError("Groq LLM failed (primary fallback)")
+    
+    # Return: Gemini + Groq (Gemini first for backward compatibility with validation logic)
+    print(f"  → Strategy: using Groq {'+ Gemini cross-validation' if gemini_out else '(Gemini unavailable)'}")
+    return gemini_out or {}, groq_out

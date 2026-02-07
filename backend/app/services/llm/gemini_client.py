@@ -33,6 +33,10 @@ async def gemini_complete(
     """
     Call Gemini chat completion. Returns raw response text (expect JSON from prompt).
     Runs sync SDK in thread pool to avoid blocking.
+    
+    Raises:
+        RuntimeError: If API call fails (quota, authentication, network, etc.)
+        ImportError: If google-generativeai is not installed
     """
     settings = get_settings()
     temp = temperature if temperature is not None else settings.llm_temperature
@@ -41,11 +45,22 @@ async def gemini_complete(
         import google.generativeai as genai  # noqa: F401
     except ImportError:
         raise RuntimeError("google-generativeai is required for Gemini. pip install google-generativeai")
+    
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: _gemini_sync(system, user, temp, max_tok, settings.gemini_model, settings.gemini_api_key),
-    )
+    try:
+        return await loop.run_in_executor(
+            None,
+            lambda: _gemini_sync(system, user, temp, max_tok, settings.gemini_model, settings.gemini_api_key),
+        )
+    except Exception as e:
+        # Re-raise with context (quota, auth, network, etc.)
+        error_msg = str(e)
+        if "quota" in error_msg.lower() or "429" in error_msg:
+            raise RuntimeError(f"Gemini quota exhausted: {error_msg}") from e
+        elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            raise RuntimeError(f"Gemini authentication failed: {error_msg}") from e
+        else:
+            raise RuntimeError(f"Gemini API error: {error_msg}") from e
 
 
 def parse_gemini_json(raw: str) -> Dict[str, Any]:

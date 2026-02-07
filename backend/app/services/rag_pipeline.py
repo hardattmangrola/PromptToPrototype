@@ -49,8 +49,12 @@ async def run_rag(
     settings = get_settings()
     try:
         # Step 1: Intent classification — abort early if unsafe
+        print(f"\n=== Intent Classification ===")
+        print(f"  Query: {query[:80]}...")
         ensure_safe_intent(query)
+        print(f"  ✓ Intent is safe")
     except RefusalError as e:
+        print(f"  ✗ Unsafe intent detected: {e.details.get('reason', 'unknown')}")
         await log_refusal(user_id or "", role or "", query, e.details.get("reason", "unsafe_intent"), e.details)
         return RefusalResponse(
             message=RefusalError.REFUSAL_MESSAGE,
@@ -58,28 +62,32 @@ async def run_rag(
         )
 
     # Step 2: Hybrid retrieval
+    print(f"\n=== Retrieval ===")
+    print(f"  Query: {query[:80]}...")
     chunks = []
     retrieval_error = None
     try:
         chunks = await hybrid_query(query, top_k=top_k, namespace=namespace, index_override=index_override)
         if chunks and len(chunks) > 0:
-            print(f"Retrieved {len(chunks)} chunks for query: {query[:100]}")
+            print(f"  ✓ Retrieved {len(chunks)} chunks")
         else:
-            print(f"No chunks retrieved for query: {query[:100]}")
+            print(f"  ⚠ No chunks retrieved")
     except Exception as e:
         retrieval_error = str(e)
-        print(f"Retrieval error: {retrieval_error}")
+        print(f"  ✗ Retrieval error: {retrieval_error}")
         # Don't fail immediately on retrieval; attempt with context anyway
 
     if not chunks:
         # If retrieval failed completely, return refusal
         if retrieval_error:
+            print(f"  → Aborting: retrieval failed")
             await log_refusal(user_id or "", role or "", query, "retrieval_error", {"error": retrieval_error})
             return RefusalResponse(
                 message="Unable to search documents at this time. Please try again later.",
                 reason="retrieval_error"
             )
         # If retrieval succeeded but found nothing, return helpful refusal
+        print(f"  → Aborting: no relevant documents found")
         await log_refusal(user_id or "", role or "", query, "no_evidence", None)
         return RefusalResponse(
             message="This information is not found in the documents you provided. "
@@ -89,16 +97,36 @@ async def run_rag(
 
     # Similarity threshold already applied in hybrid_query; if we got chunks we proceed
     # Step 3 & 4: Context injection + LLM invocation (parallel)
+    print(f"\n=== LLM Generation ===")
+    print(f"  Query: {query[:80]}...")
+    print(f"  Context chunks: {len(chunks)}")
+    groq_out = None
+    gemini_out = None
+    llm_error = None
     try:
         groq_out, gemini_out = await llm_grounded_generate(query, chunks)
+        if groq_out:
+            print(f"  ✓ Groq response: {len(groq_out.get('answer', ''))} chars")
+        if gemini_out:
+            print(f"  ✓ Gemini response: {len(gemini_out.get('answer', ''))} chars")
+        if not groq_out and not gemini_out:
+            print(f"  ✗ Both models returned empty responses")
+            llm_error = "Both Groq and Gemini returned empty responses"
     except Exception as e:
-        await log_refusal(user_id or "", role or "", query, "llm_error", {"error": str(e)})
+        llm_error = str(e)
+        print(f"  ✗ LLM Error: {llm_error}")
+    
+    if llm_error:
+        await log_refusal(user_id or "", role or "", query, "llm_error", {"error": llm_error})
         return RefusalResponse(message=RefusalError.REFUSAL_MESSAGE, reason="llm_error")
 
     # Step 5 & 6: Post-generation validation and merge
+    print(f"\n=== Validation & Merge ===")
     try:
         merged = validate_and_merge(groq_out, gemini_out, chunks)
+        print(f"  ✓ Validation passed, confidence: {merged.get('confidence')}")
     except RefusalError as e:
+        print(f"  ✗ Validation failed: {e.details.get('reason', 'unknown')}")
         await log_refusal(user_id or "", role or "", query, e.details.get("reason", "validation_failed"), e.details)
         return RefusalResponse(
             message=RefusalError.REFUSAL_MESSAGE,

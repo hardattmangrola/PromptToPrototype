@@ -131,34 +131,48 @@ def validate_and_merge(
     
     # Only Groq succeeded
     if has_groq and not has_gemini:
-        print("Using Groq response only (Gemini failed)")
+        print("\n=== Validation: Groq only ===")
         ok, reason = check_safety_filter(a1)
         if not ok:
+            print(f"  Safety filter FAILED: {reason}")
             raise RefusalError(reason=reason or "safety_filter_triggered")
+        print("  Safety filter ✓")
         ok, reason = check_citation_enforcement(a1, c1)
         if not ok:
+            print(f"  Citation enforcement FAILED: {reason}")
             raise RefusalError(reason=reason or "citation_enforcement")
+        print("  Citation enforcement ✓")
         ok, reason = check_claim_context_consistency(a1, chunks, c1)
         if not ok:
+            print(f"  Claim consistency FAILED: {reason}")
             raise RefusalError(reason=reason or "claim_context_consistency")
+        print("  Claim consistency ✓")
+        print("  All validations PASSED\n")
         return {
             "answer": a1,
             "citations": c1[:20],
-            "confidence": 0.75,
+            "confidence": 0.80,
         }
     
     # Only Gemini succeeded
     if has_gemini and not has_groq:
-        print("Using Gemini response only (Groq failed)")
+        print("\n=== Validation: Gemini only ===")
         ok, reason = check_safety_filter(a2)
         if not ok:
+            print(f"  Safety filter FAILED: {reason}")
             raise RefusalError(reason=reason or "safety_filter_triggered")
+        print("  Safety filter ✓")
         ok, reason = check_citation_enforcement(a2, c2)
         if not ok:
+            print(f"  Citation enforcement FAILED: {reason}")
             raise RefusalError(reason=reason or "citation_enforcement")
+        print("  Citation enforcement ✓")
         ok, reason = check_claim_context_consistency(a2, chunks, c2)
         if not ok:
+            print(f"  Claim consistency FAILED: {reason}")
             raise RefusalError(reason=reason or "claim_context_consistency")
+        print("  Claim consistency ✓")
+        print("  All validations PASSED\n")
         return {
             "answer": a2,
             "citations": c2[:20],
@@ -166,41 +180,62 @@ def validate_and_merge(
         }
     
     # Both succeeded - validate both and merge
-    print(f"Both models responded: Groq ({len(a1)} chars), Gemini ({len(a2)} chars)")
+    print(f"\n=== Validation: Both models ===")
+    print(f"  Groq: {len(a1)} chars | Gemini: {len(a2)} chars")
     
     ok, reason = check_safety_filter(a1)
     if not ok:
+        print(f"  Groq safety filter FAILED: {reason}")
         raise RefusalError(reason=reason or "safety_filter_triggered")
+    print("  Groq safety filter ✓")
+    
     ok, reason = check_safety_filter(a2)
     if not ok:
+        print(f"  Gemini safety filter FAILED: {reason}")
         raise RefusalError(reason=reason or "safety_filter_triggered")
+    print("  Gemini safety filter ✓")
 
     ok, reason = check_cross_model_agreement(groq_out, gemini_out)
     if not ok:
-        print(f"Models disagree: {reason}")
+        print(f"  Cross-model agreement: {reason}")
+    else:
+        print(f"  Cross-model agreement ✓")
 
     ok, reason = check_citation_enforcement(a1, c1)
     if not ok:
+        print(f"  Groq citation FAILED: {reason}")
         raise RefusalError(reason=reason or "citation_enforcement")
+    print("  Groq citations ✓")
+    
     ok, reason = check_citation_enforcement(a2, c2)
     if not ok:
+        print(f"  Gemini citation FAILED: {reason}")
         raise RefusalError(reason=reason or "citation_enforcement")
+    print("  Gemini citations ✓")
     
     ok, reason = check_claim_context_consistency(a1, chunks, c1)
     if not ok:
+        print(f"  Groq consistency FAILED: {reason}")
         raise RefusalError(reason=reason or "claim_context_consistency")
+    print("  Groq claim consistency ✓")
+    
     ok, reason = check_claim_context_consistency(a2, chunks, c2)
     if not ok:
+        print(f"  Gemini consistency FAILED: {reason}")
         raise RefusalError(reason=reason or "claim_context_consistency")
+    print("  Gemini claim consistency ✓")
 
     merged_citations = list(dict.fromkeys(c1 + c2))
     
     if len(a1) <= len(a2):
         merged_answer = a1
+        print(f"  Selected Groq (shorter)")
     else:
         merged_answer = a2
+        print(f"  Selected Gemini (shorter)")
     
     confidence = 0.95
+    print(f"  All validations PASSED (confidence: {confidence})\n")
 
     return {
         "answer": merged_answer,
