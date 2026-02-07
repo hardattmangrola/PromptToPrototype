@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.core.exceptions import AppException, RefusalError
 from app.db.mongodb import connect_mongodb, close_mongodb
-from app.api.routes import auth, health, rag
+from app.api.routes import auth, health, rag, documents
 
 
 @asynccontextmanager
@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(documents.router, prefix=settings.api_prefix)
     app.include_router(rag.router, prefix=settings.api_prefix)
 
     return app

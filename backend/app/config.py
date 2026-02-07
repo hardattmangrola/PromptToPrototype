@@ -2,17 +2,22 @@
 Application configuration. All settings loaded from environment variables.
 """
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env path relative to backend folder (parent of app/)
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
 
 
 class Settings(BaseSettings):
     """Application settings with validation."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE if _ENV_FILE.exists() else ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -33,18 +38,23 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    # Pinecone
+    # Pinecone (separate dense + sparse indexes)
     pinecone_api_key: str = Field(..., description="Pinecone API key")
-    pinecone_environment: Optional[str] = None  # e.g. us-east-1-aws
+    pinecone_environment: Optional[str] = None
     pinecone_index_name: str = "healthcare-hybrid"
     pinecone_index_dense: str = "healthcare-dense"
     pinecone_index_sparse: str = "healthcare-sparse"
-    pinecone_host: Optional[str] = None  # Override if using custom host
-    use_hybrid_index: bool = True  # Single index with dense+sparse; else two indexes
+    pinecone_host: Optional[str] = None  # Legacy: single hybrid host
+    pinecone_host_dense: Optional[str] = None  # e.g. https://healthcare-dense-xxx.svc.region.pinecone.io
+    pinecone_host_sparse: Optional[str] = None  # e.g. https://healthcare-sparse-xxx.svc.region.pinecone.io
+    pinecone_index_upload: Optional[str] = None  # Optional separate upload index (use if local fallback produced different dim)
+    use_hybrid_index: bool = False  # True = single index; False = use separate dense + sparse indexes
 
-    # Embeddings
+    # Embeddings (both dense + sparse will be normalized to this dimension)
     dense_embedding_model: str = "llama-text-embed-v2"
-    sparse_embedding_model: str = "pinecone-sparse-english"
+    dense_embedding_dimension: int = 512
+    sparse_embedding_model: str = "pinecone-sparse-english-v0"
+    sparse_embedding_dimension: int = 512
 
     # Retrieval
     retrieval_top_k: int = 10

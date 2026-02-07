@@ -41,6 +41,7 @@ async def run_rag(
     role: Optional[str] = None,
     top_k: Optional[int] = None,
     namespace: Optional[str] = None,
+    index_override: Optional[str] = None,
 ) -> RAGResponse | RefusalResponse:
     """
     Execute the full RAG pipeline. Returns RAGResponse on success or RefusalResponse on refusal.
@@ -58,7 +59,7 @@ async def run_rag(
 
     # Step 2: Hybrid retrieval
     try:
-        chunks = await hybrid_query(query, top_k=top_k, namespace=namespace)
+        chunks = await hybrid_query(query, top_k=top_k, namespace=namespace, index_override=index_override)
     except Exception as e:
         await log_refusal(user_id or "", role or "", query, "retrieval_error", {"error": str(e)})
         return RefusalResponse(message=RefusalError.REFUSAL_MESSAGE, reason="retrieval_error")
@@ -66,7 +67,8 @@ async def run_rag(
     if not chunks:
         await log_refusal(user_id or "", role or "", query, "no_results", None)
         return RefusalResponse(
-            message="No relevant information was found in the provided documents for this question.",
+            message="This information is not in the document you provided or is out of scope. "
+                    "For personal health questions or if in doubt, please consult a qualified healthcare professional.",
             reason="no_evidence",
         )
 

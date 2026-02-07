@@ -15,6 +15,8 @@ class RAGRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: Optional[int] = Field(None, ge=1, le=20)
     include_metadata: bool = True
+    namespace: Optional[str] = Field(None, description="Pinecone namespace (e.g. from document upload)")
+    upload_id: Optional[str] = Field(None, description="Resolve to namespace from upload record")
 
 
 class RAGResponse(BaseModel):

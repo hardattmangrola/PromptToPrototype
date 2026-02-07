@@ -4,22 +4,40 @@ JWT and password security. Uses bcrypt for hashing and HS256 for JWT.
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.config import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+# bcrypt has a 72-byte limit; truncate to avoid ValueError
+BCRYPT_MAX_PASSWORD_BYTES = 72
+BCRYPT_ROUNDS = 12
+
+
+def _truncate_password_for_bcrypt(password: str) -> bytes:
+    """Truncate to 72 bytes so bcrypt accepts it. Returns bytes."""
+    pwd_bytes = password.encode("utf-8")
+    if len(pwd_bytes) <= BCRYPT_MAX_PASSWORD_BYTES:
+        return pwd_bytes
+    return pwd_bytes[:BCRYPT_MAX_PASSWORD_BYTES]
 
 
 def get_password_hash(password: str) -> str:
-    """Hash password with bcrypt."""
-    return pwd_context.hash(password)
+    """Hash password with bcrypt (password truncated to 72 bytes if longer)."""
+    pwd_bytes = _truncate_password_for_bcrypt(password)
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed.decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify plain password against hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify plain password against hash (plain truncated to 72 bytes if longer)."""
+    pwd_bytes = _truncate_password_for_bcrypt(plain_password)
+    try:
+        hash_bytes = hashed_password.encode("utf-8")
+    except Exception:
+        return False
+    return bcrypt.checkpw(pwd_bytes, hash_bytes)
 
 
 def create_access_token(
