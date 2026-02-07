@@ -8,6 +8,12 @@ Users can upload medical PDFs, which the system processes and indexes. Subsequen
 
 ## System Archiecture
 ![Sys-Arch](https://github.com/hardattmangrola/PromptToPrototype/blob/e64afb637122bd17a6da3fa6d683b80dca383a1d/sys-arch.png)
+
+## User Interface
+![UI](https://github.com/hardattmangrola/PromptToPrototype/blob/5d287a3546328a3e3149916ce45fbef3c553f886/ui.png)
+
+![login](https://github.com/hardattmangrola/PromptToPrototype/blob/77ac29bcaf4273e337445abde3546e4dab92fec9/login.png)
+
 ## Project Flow
 
 1.  **Authentication**: Users register or log in to the platform. Role-based access control distinguishes between standard users and medical professionals.
