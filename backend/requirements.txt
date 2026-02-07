@@ -1,0 +1,31 @@
+# Healthcare RAG Backend — Python 3.10+
+# Core
+fastapi>=0.109.0,<0.115.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Auth & security
+PyJWT>=2.8.0
+bcrypt>=4.0.0
+python-multipart>=0.0.6
+
+# MongoDB
+motor>=3.3.0
+pymongo>=4.6.0
+
+# Pinecone (vector DB + inference for embeddings)
+pinecone>=3.0.0
+
+# LLM providers
+groq>=0.4.0
+google-generativeai>=0.3.0
+
+# Optional: email validation
+email-validator>=2.1.0
+
+# PDF processing for document upload
+pypdf>=4.0.0
+
+# Local embedding fallback when Pinecone Inference unavailable (384-dim; index must match)
+sentence-transformers>=2.2.0
