@@ -58,17 +58,32 @@ async def run_rag(
         )
 
     # Step 2: Hybrid retrieval
+    chunks = []
+    retrieval_error = None
     try:
         chunks = await hybrid_query(query, top_k=top_k, namespace=namespace, index_override=index_override)
+        if chunks and len(chunks) > 0:
+            print(f"Retrieved {len(chunks)} chunks for query: {query[:100]}")
+        else:
+            print(f"No chunks retrieved for query: {query[:100]}")
     except Exception as e:
-        await log_refusal(user_id or "", role or "", query, "retrieval_error", {"error": str(e)})
-        return RefusalResponse(message=RefusalError.REFUSAL_MESSAGE, reason="retrieval_error")
+        retrieval_error = str(e)
+        print(f"Retrieval error: {retrieval_error}")
+        # Don't fail immediately on retrieval; attempt with context anyway
 
     if not chunks:
-        await log_refusal(user_id or "", role or "", query, "no_results", None)
+        # If retrieval failed completely, return refusal
+        if retrieval_error:
+            await log_refusal(user_id or "", role or "", query, "retrieval_error", {"error": retrieval_error})
+            return RefusalResponse(
+                message="Unable to search documents at this time. Please try again later.",
+                reason="retrieval_error"
+            )
+        # If retrieval succeeded but found nothing, return helpful refusal
+        await log_refusal(user_id or "", role or "", query, "no_evidence", None)
         return RefusalResponse(
-            message="This information is not in the document you provided or is out of scope. "
-                    "For personal health questions or if in doubt, please consult a qualified healthcare professional.",
+            message="This information is not found in the documents you provided. "
+                    "If you have questions about your personal health, please consult a qualified healthcare professional.",
             reason="no_evidence",
         )
 

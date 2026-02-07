@@ -39,25 +39,28 @@ class ClassificationResult:
 
 
 # Patterns and keywords for forbidden intents (critical risk)
+# NOTE: Patterns must be SPECIFIC to avoid false positives on innocent factual questions.
+# "What is the patient name?" is ALLOWED (factual lookup).
+# "What should I take?" is FORBIDDEN (personalized treatment).
 FORBIDDEN_PATTERNS = [
+    # Diagnosis: must ask about THEIR condition
     (ForbiddenCategory.DIAGNOSIS, re.compile(
-        r"\b(what (disease|condition|illness|wrong with me|do i have)|diagnos(e|is|ed)|"
-        r"do i have|symptoms suggest|could i have|do i suffer from)\b",
+        r"\b(do i (have|suffer from)|what (disease|condition|illness|wrong with (me|you))|diagnos(e|is|ed|is)( (me|you))?|my symptoms?|symptoms suggest|could i have|what's wrong|what do i have)\b",
         re.I,
     )),
+    # Personalized treatment: must ask about THEIR care
     (ForbiddenCategory.PERSONALIZED_TREATMENT, re.compile(
-        r"\b(what (should i take|medication|drug|treatment) (for me|i take)|"
-        r"recommend (me|for me)|prescribe|dosage for me|how much should i (take|use))\b",
+        r"\b(what (should i|can i|do i) (take|use|do)|for (me|my (condition|case|situation))|prescribe (me|to me)|dosage for (me|my)|my treatment|medication for (me|my))\b",
         re.I,
     )),
+    # Medical advice: must ask for personal guidance
     (ForbiddenCategory.MEDICAL_ADVICE, re.compile(
-        r"\b(is (this|it) (safe|ok|okay) for me|can i take|should i (take|use|stop)|"
-        r"medical advice|advise me|tell me what to do|what do you recommend)\b",
+        r"\b(is (this|it|that) (safe|ok|okay) for (me|you)|should i (take|use|stop|do)|what should i do|can i safely|advise (me|you)|you (should|must|recommend)|tell (me|you) what to do)\b",
         re.I,
     )),
+    # External knowledge: must explicitly reference outside doc
     (ForbiddenCategory.EXTERNAL_KNOWLEDGE, re.compile(
-        r"\b(best treatment (globally|in the world|generally)|"
-        r"latest (research|studies)|outside (the )?document|not in (the )?document)\b",
+        r"\b(best treatment (globally|in the world|generally|elsewhere)|latest (research|studies|clinical|findings)|outside (the )?document|not in (the )?document|beyond|what do (you|I) think)\b",
         re.I,
     )),
 ]

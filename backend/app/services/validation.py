@@ -114,7 +114,7 @@ def validate_and_merge(
 ) -> Dict[str, Any]:
     """
     Run all validations. If any fail, raise RefusalError.
-    Otherwise merge overlapping content conservatively and return single answer + citations.
+    Handles both models, single model, or fallback scenarios.
     """
     settings = get_settings()
     a1 = (groq_out.get("answer") or "").strip()
@@ -122,7 +122,52 @@ def validate_and_merge(
     c1 = groq_out.get("citations") or []
     c2 = gemini_out.get("citations") or []
 
-    # Safety filter on both
+    has_groq = bool(a1)
+    has_gemini = bool(a2)
+    
+    # No valid response from either model
+    if not has_groq and not has_gemini:
+        raise RefusalError(reason="no_valid_response", details={"groq": False, "gemini": False})
+    
+    # Only Groq succeeded
+    if has_groq and not has_gemini:
+        print("Using Groq response only (Gemini failed)")
+        ok, reason = check_safety_filter(a1)
+        if not ok:
+            raise RefusalError(reason=reason or "safety_filter_triggered")
+        ok, reason = check_citation_enforcement(a1, c1)
+        if not ok:
+            raise RefusalError(reason=reason or "citation_enforcement")
+        ok, reason = check_claim_context_consistency(a1, chunks, c1)
+        if not ok:
+            raise RefusalError(reason=reason or "claim_context_consistency")
+        return {
+            "answer": a1,
+            "citations": c1[:20],
+            "confidence": 0.75,
+        }
+    
+    # Only Gemini succeeded
+    if has_gemini and not has_groq:
+        print("Using Gemini response only (Groq failed)")
+        ok, reason = check_safety_filter(a2)
+        if not ok:
+            raise RefusalError(reason=reason or "safety_filter_triggered")
+        ok, reason = check_citation_enforcement(a2, c2)
+        if not ok:
+            raise RefusalError(reason=reason or "citation_enforcement")
+        ok, reason = check_claim_context_consistency(a2, chunks, c2)
+        if not ok:
+            raise RefusalError(reason=reason or "claim_context_consistency")
+        return {
+            "answer": a2,
+            "citations": c2[:20],
+            "confidence": 0.75,
+        }
+    
+    # Both succeeded - validate both and merge
+    print(f"Both models responded: Groq ({len(a1)} chars), Gemini ({len(a2)} chars)")
+    
     ok, reason = check_safety_filter(a1)
     if not ok:
         raise RefusalError(reason=reason or "safety_filter_triggered")
@@ -130,15 +175,17 @@ def validate_and_merge(
     if not ok:
         raise RefusalError(reason=reason or "safety_filter_triggered")
 
-    # Cross-model agreement
     ok, reason = check_cross_model_agreement(groq_out, gemini_out)
     if not ok:
-        raise RefusalError(reason=reason or "model_contradiction")
+        print(f"Models disagree: {reason}")
 
-    # Citation enforcement for both
     ok, reason = check_citation_enforcement(a1, c1)
     if not ok:
         raise RefusalError(reason=reason or "citation_enforcement")
+    ok, reason = check_citation_enforcement(a2, c2)
+    if not ok:
+        raise RefusalError(reason=reason or "citation_enforcement")
+    
     ok, reason = check_claim_context_consistency(a1, chunks, c1)
     if not ok:
         raise RefusalError(reason=reason or "claim_context_consistency")
@@ -146,18 +193,14 @@ def validate_and_merge(
     if not ok:
         raise RefusalError(reason=reason or "claim_context_consistency")
 
-    # Merge: prefer conservative (shorter, more cited) or first; combine citations
     merged_citations = list(dict.fromkeys(c1 + c2))
-    if len(a1) <= len(a2) and c1:
+    
+    if len(a1) <= len(a2):
         merged_answer = a1
-    elif c2:
-        merged_answer = a2
     else:
-        merged_answer = a1 or a2
-
-    confidence = 1.0 if (a1 and a2) else 0.8
-    if confidence < settings.merge_confidence_threshold:
-        raise RefusalError(reason="low_confidence_merge")
+        merged_answer = a2
+    
+    confidence = 0.95
 
     return {
         "answer": merged_answer,

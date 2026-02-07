@@ -16,7 +16,12 @@ async def llm_grounded_generate(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Call Groq and Gemini in parallel with same context and grounding instructions.
-    Returns (groq_parsed, gemini_parsed) for downstream validation and merge.
+    If one fails, try the other as fallback. Returns (groq_parsed, gemini_parsed).
+    
+    Strategy:
+    1. Try both in parallel (fast path)
+    2. If one fails, retry the failed one sequentially
+    3. If both fail after retry, raise error
     """
     context = format_context(chunks)
     user_msg = build_grounding_user(context, query)
@@ -29,25 +34,47 @@ async def llm_grounded_generate(
         raw = await gemini_complete(GROUNDING_SYSTEM, user_msg)
         return parse_gemini_json(raw)
 
-    groq_out, gemini_out = {}, {}
+    # Try both in parallel first
     results = await asyncio.gather(groq_task(), gemini_task(), return_exceptions=True)
     
-    # Handle Groq result
-    if isinstance(results[0], Exception):
-        print(f"Groq task failed: {results[0]}")
-        groq_out = {}
-    else:
-        groq_out = results[0]
-
-    # Handle Gemini result
-    if isinstance(results[1], Exception):
-        print(f"Gemini task failed: {results[1]}")
-        gemini_out = {}
-    else:
-        gemini_out = results[1]
-
-    # If both failed, raise an exception or handle it (though validation pipeline might handle empty dicts)
+    groq_out = results[0] if not isinstance(results[0], Exception) else None
+    gemini_out = results[1] if not isinstance(results[1], Exception) else None
+    groq_error = results[0] if isinstance(results[0], Exception) else None
+    gemini_error = results[1] if isinstance(results[1], Exception) else None
+    
+    # If one failed, try sequential fallback
+    if groq_error and not gemini_out:
+        print(f"Groq failed, retrying Gemini: {groq_error}")
+        try:
+            gemini_out = await gemini_task()
+        except Exception as e:
+            print(f"Gemini fallback also failed: {e}")
+            gemini_out = None
+    
+    if gemini_error and not groq_out:
+        print(f"Gemini failed, retrying Groq: {gemini_error}")
+        try:
+            groq_out = await groq_task()
+        except Exception as e:
+            print(f"Groq fallback also failed: {e}")
+            groq_out = None
+    
+    # If still failing, try fallback a second time simultaneously
     if not groq_out and not gemini_out:
-        raise RuntimeError("Both LLM providers failed to generate a response.")
-
-    return groq_out, gemini_out
+        print("Both LLM providers failed initially, attempting aggressive fallback...")
+        fallback_results = await asyncio.gather(
+            groq_task() if groq_error else asyncio.sleep(0),
+            gemini_task() if gemini_error else asyncio.sleep(0),
+            return_exceptions=True
+        )
+        if groq_error:
+            groq_out = fallback_results[0] if not isinstance(fallback_results[0], Exception) else None
+        if gemini_error:
+            gemini_out = fallback_results[1] if not isinstance(fallback_results[1], Exception) else None
+    
+    # If both still failed after all retries, raise
+    if not groq_out and not gemini_out:
+        raise RuntimeError(f"Both LLM providers failed. Groq: {groq_error}, Gemini: {gemini_error}")
+    
+    # Return both (one or both may be populated)
+    return groq_out or {}, gemini_out or {}
