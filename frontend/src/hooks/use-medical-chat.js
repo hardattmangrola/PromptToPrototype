@@ -1,13 +1,14 @@
 import * as React from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/auth/AuthProvider'
+import api from '@/services/api'
 
-// Consolidated mock response generator
+// Mock response for demo mode
 const generateMockResponse = (role) => {
     const isDoctor = role === 'doctor'
 
     const reasoning = `${isDoctor ? 'Analyzing clinical query' : 'Understanding your concern'}...
-→ Retrieving relevant information
+→ Retrieving relevant documents
 → ${isDoctor ? 'Applying clinical guidelines' : 'Preparing helpful guidance'}
 → Generating response`
 
@@ -27,7 +28,7 @@ const generateMockResponse = (role) => {
     const patientContent = `Thank you for your question. Here's helpful information:
 
 **Key Points:**
-- This is a common concern that many people experience
+- This is a common concern
 - Lifestyle factors often play an important role
 - Professional evaluation can provide personalized guidance
 
@@ -36,21 +37,19 @@ const generateMockResponse = (role) => {
 - Maintain regular sleep patterns
 - Consider scheduling a check-up if symptoms persist
 
-**When to seek care:** If symptoms worsen or persist beyond a few days.
-
 *This is general information. Please consult a healthcare provider for personalized advice.*`
 
     return {
         reasoning,
         content: isDoctor ? doctorContent : patientContent,
         confidence: isDoctor ? 92 : 85,
-        citations: isDoctor ? [{ id: 1, source: "Clinical Guidelines", page: 23 }] : []
+        citations: isDoctor ? [{ doc_name: "Clinical Guidelines", page: 23 }] : []
     }
 }
 
 export function useMedicalChat() {
-    const { setInteractionMode, interactionMode } = useAppStore()
-    const { token, isOffline, user } = useAuth()
+    const { setInteractionMode, interactionMode, uploadedDocument } = useAppStore()
+    const { isOffline, user } = useAuth()
 
     const [messages, setMessages] = React.useState([])
     const [isLoading, setIsLoading] = React.useState(false)
@@ -60,7 +59,6 @@ export function useMedicalChat() {
     const sendMessage = React.useCallback(async (text, file) => {
         if (!text && !file) return
 
-        // Add user message
         const userMsg = { id: Date.now(), role: 'user', content: text, file: file ? { name: file.name } : null }
         setMessages(prev => [...prev, userMsg])
 
@@ -69,27 +67,32 @@ export function useMedicalChat() {
         setIsLoading(true)
         const aiMsgId = Date.now() + 1
 
-        // Add placeholder
-        setMessages(prev => [...prev, { id: aiMsgId, role: 'ai', content: '', reasoning: '', confidence: 0, citations: [], isLoading: true }])
+        setMessages(prev => [...prev, {
+            id: aiMsgId,
+            role: 'ai',
+            content: '',
+            reasoning: '',
+            confidence: 0,
+            citations: [],
+            refused: false,
+            isLoading: true
+        }])
 
-        // Use mock or real API
-        if (isOffline || !token) {
+        if (isOffline || !api.accessToken) {
             await simulateResponse(aiMsgId, userRole)
         } else {
-            await fetchResponse(text, file, aiMsgId, userRole)
+            await fetchRAGResponse(text, aiMsgId)
         }
 
         setIsLoading(false)
-    }, [interactionMode, isOffline, token, userRole, setInteractionMode])
+    }, [interactionMode, isOffline, userRole, setInteractionMode, uploadedDocument])
 
     const simulateResponse = async (aiMsgId, role) => {
         const mock = generateMockResponse(role)
 
-        // Show reasoning
         setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, reasoning: mock.reasoning } : m))
         await new Promise(r => setTimeout(r, 600))
 
-        // Stream content
         for (let i = 0; i <= mock.content.length; i++) {
             setMessages(prev => prev.map(m => m.id === aiMsgId ? {
                 ...m,
@@ -102,33 +105,40 @@ export function useMedicalChat() {
         }
     }
 
-    const fetchResponse = async (text, file, aiMsgId, role) => {
+    const fetchRAGResponse = async (query, aiMsgId) => {
         try {
-            const formData = new FormData()
-            formData.append("query", text)
-            formData.append("role", role)
-            if (file) formData.append("file", file)
-
-            const res = await fetch("http://localhost:8000/api/v1/chat/", {
-                method: "POST",
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-                body: formData,
+            const uploadedDoc = useAppStore.getState().uploadedDocument
+            const response = await api.query(query, {
+                topK: 5,
+                uploadId: uploadedDoc?.upload_id,
             })
 
-            if (!res.ok) throw new Error("API error")
-
-            const reader = res.body.getReader()
-            const decoder = new TextDecoder()
-            let content = ""
-
-            while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
-                content += decoder.decode(value)
-                setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, content, isLoading: false } : m))
+            // Check if refused
+            if (response.refused) {
+                setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+                    ...m,
+                    content: response.message,
+                    reasoning: `Query analysis: ${response.reason || 'Out of scope'}`,
+                    refused: true,
+                    isLoading: false,
+                } : m))
+                return
             }
-        } catch {
-            await simulateResponse(aiMsgId, role)
+
+            // Success response with citations
+            setMessages(prev => prev.map(m => m.id === aiMsgId ? {
+                ...m,
+                content: response.answer,
+                reasoning: 'Retrieved and validated from medical documents',
+                confidence: response.confidence ? response.confidence * 100 : 90,
+                citations: response.citations || [],
+                limitations: response.limitations,
+                isLoading: false,
+            } : m))
+
+        } catch (error) {
+            console.error('RAG error:', error)
+            await simulateResponse(aiMsgId, userRole)
         }
     }
 

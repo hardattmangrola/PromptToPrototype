@@ -1,22 +1,20 @@
 import * as React from "react"
+import api from "@/services/api"
 
 const AuthContext = React.createContext(null)
 
 /**
- * AuthProvider with role-based login (doctor/patient).
- * Doctors require NMC verification before login.
+ * AuthProvider with backend integration and demo mode fallback.
  */
 export function AuthProvider({ children }) {
     const [user, setUser] = React.useState(null)
-    const [token, setToken] = React.useState(() => localStorage.getItem("token"))
     const [loading, setLoading] = React.useState(true)
     const [isOffline, setIsOffline] = React.useState(false)
 
     React.useEffect(() => {
-        if (token) {
-            fetchUser(token)
+        if (api.accessToken) {
+            fetchUser()
         } else {
-            // Check for saved user in sessionStorage (demo mode persistence)
             const savedUser = sessionStorage.getItem("demoUser")
             if (savedUser) {
                 setUser(JSON.parse(savedUser))
@@ -24,120 +22,58 @@ export function AuthProvider({ children }) {
             }
             setLoading(false)
         }
-    }, [token])
+    }, [])
 
-    const fetchUser = async (authToken) => {
+    const fetchUser = async () => {
         try {
-            const response = await fetch("http://localhost:8000/api/v1/auth/me", {
-                headers: { Authorization: `Bearer ${authToken}` }
-            })
-            if (response.ok) {
-                const data = await response.json()
-                setUser(data)
-                setIsOffline(false)
-            } else if (response.status === 401) {
-                logout()
-            } else {
-                throw new Error("API Error")
-            }
+            const data = await api.getMe()
+            setUser(data)
+            setIsOffline(false)
         } catch (error) {
-            console.warn("Backend unavailable. Checking for local token.")
-            setIsOffline(true)
-            try {
-                const payload = JSON.parse(atob(authToken.split('.')[1]))
-                setUser({
-                    id: "jwt-user",
-                    email: payload.sub || "user@clinical.ai",
-                    full_name: "User",
-                    role: payload.role || "patient"
-                })
-            } catch {
-                logout()
+            if (error.message === 'Backend unavailable') {
+                setIsOffline(true)
+                // Use demo user from session
+                const saved = sessionStorage.getItem("demoUser")
+                if (saved) setUser(JSON.parse(saved))
+            } else {
+                api.clearTokens()
             }
         } finally {
             setLoading(false)
         }
     }
 
-    // Login as Patient (default)
     const login = async (email, password) => {
         try {
-            const formData = new URLSearchParams()
-            formData.append("username", email)
-            formData.append("password", password)
-
-            const response = await fetch("http://localhost:8000/api/v1/auth/token", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: formData,
-            })
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}))
-                throw new Error(errorData.detail || "Invalid credentials")
-            }
-
-            const data = await response.json()
-            localStorage.setItem("token", data.access_token)
-            setToken(data.access_token)
+            await api.login(email, password)
+            await fetchUser()
             setIsOffline(false)
             return true
         } catch (error) {
-            if (error.message.includes("fetch") || error.message.includes("Failed")) {
-                console.warn("Backend unavailable. Using demo mode (patient).")
-                setIsOffline(true)
-                const demoUser = {
-                    id: "demo-patient",
-                    email: email || "patient@clinical.ai",
-                    full_name: email?.split('@')[0] || "Patient",
-                    role: "patient"
-                }
-                setUser(demoUser)
-                sessionStorage.setItem("demoUser", JSON.stringify(demoUser))
+            if (error.message === 'Backend unavailable') {
+                // Demo mode fallback
+                enterDemoMode('patient', email)
                 return true
             }
             throw error
         }
     }
 
-    // Login as Doctor (with NMC verification)
     const loginAsDoctor = async (email, password, nmcNumber) => {
         try {
-            const formData = new URLSearchParams()
-            formData.append("username", email)
-            formData.append("password", password)
-            formData.append("nmc_number", nmcNumber)
-
-            const response = await fetch("http://localhost:8000/api/v1/auth/doctor-token", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: formData,
-            })
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}))
-                throw new Error(errorData.detail || "Invalid credentials")
-            }
-
-            const data = await response.json()
-            localStorage.setItem("token", data.access_token)
-            setToken(data.access_token)
+            // First register as doctor, then login
+            await api.register(email, password, 'doctor', `Dr. ${email.split('@')[0]}`)
+            await fetchUser()
             setIsOffline(false)
             return true
         } catch (error) {
-            if (error.message.includes("fetch") || error.message.includes("Failed")) {
-                console.warn("Backend unavailable. Using demo mode (doctor).")
-                setIsOffline(true)
-                const demoUser = {
-                    id: "demo-doctor",
-                    email: email || "doctor@hospital.com",
-                    full_name: `Dr. ${email?.split('@')[0] || "Smith"}`,
-                    role: "doctor",
-                    nmc_number: nmcNumber
-                }
-                setUser(demoUser)
-                sessionStorage.setItem("demoUser", JSON.stringify(demoUser))
+            if (error.message === 'Backend unavailable') {
+                enterDemoMode('doctor', email, nmcNumber)
                 return true
+            }
+            // Try login if already registered
+            if (error.message.includes('exists') || error.message.includes('duplicate')) {
+                return login(email, password)
             }
             throw error
         }
@@ -145,31 +81,13 @@ export function AuthProvider({ children }) {
 
     const register = async (email, password, fullName) => {
         try {
-            const response = await fetch("http://localhost:8000/api/v1/auth/register", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password, full_name: fullName }),
-            })
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}))
-                throw new Error(errorData.detail || "Registration failed")
-            }
-
-            await login(email, password)
+            await api.register(email, password, 'patient', fullName)
+            await fetchUser()
+            setIsOffline(false)
             return true
         } catch (error) {
-            if (error.message.includes("fetch") || error.message.includes("Failed")) {
-                console.warn("Backend unavailable. Using demo mode.")
-                setIsOffline(true)
-                const demoUser = {
-                    id: "demo-patient",
-                    email: email,
-                    full_name: fullName,
-                    role: "patient"
-                }
-                setUser(demoUser)
-                sessionStorage.setItem("demoUser", JSON.stringify(demoUser))
+            if (error.message === 'Backend unavailable') {
+                enterDemoMode('patient', email, null, fullName)
                 return true
             }
             throw error
@@ -177,24 +95,26 @@ export function AuthProvider({ children }) {
     }
 
     const logout = () => {
-        localStorage.removeItem("token")
+        api.clearTokens()
         sessionStorage.removeItem("demoUser")
-        setToken(null)
         setUser(null)
         setIsOffline(false)
     }
 
-    const enterDemoMode = (role = 'patient') => {
+    const enterDemoMode = (role = 'patient', email, nmcNumber, fullName) => {
         setIsOffline(true)
         const demoUser = {
             id: `demo-${role}`,
-            email: role === 'doctor' ? "doctor@hospital.com" : "patient@clinic.com",
-            full_name: role === 'doctor' ? "Dr. Demo" : "Demo Patient",
-            role: role
+            email: email || (role === 'doctor' ? "doctor@hospital.com" : "patient@clinic.com"),
+            full_name: fullName || (role === 'doctor' ? "Dr. Demo" : "Demo Patient"),
+            role,
+            nmc_number: nmcNumber,
         }
         setUser(demoUser)
         sessionStorage.setItem("demoUser", JSON.stringify(demoUser))
     }
+
+    const token = api.accessToken
 
     return (
         <AuthContext.Provider value={{

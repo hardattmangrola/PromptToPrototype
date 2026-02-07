@@ -1,15 +1,17 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Search, Paperclip, FileText, X } from "lucide-react"
+import { Search, Paperclip, FileText, X, Upload, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@/store/useAppStore"
+import { useDocumentUpload } from "@/hooks/use-document-upload"
 
 export function HeroSearch({ onSendMessage }) {
     const { interactionMode } = useAppStore()
+    const { uploadDocument, clearDocument, uploading, uploadedDocument, error: uploadError } = useDocumentUpload()
+
     const [query, setQuery] = React.useState("")
     const [isDragOver, setIsDragOver] = React.useState(false)
-    const [selectedFile, setSelectedFile] = React.useState(null)
     const fileInputRef = React.useRef(null)
     const inputRef = React.useRef(null)
 
@@ -17,37 +19,36 @@ export function HeroSearch({ onSendMessage }) {
 
     const handleSubmit = (e) => {
         e.preventDefault()
-        if (!query.trim() && !selectedFile) return
-        onSendMessage?.(query, selectedFile)
+        if (!query.trim()) return
+        onSendMessage?.(query)
         setQuery("")
-        setSelectedFile(null)
     }
 
     const handleDragOver = (e) => { e.preventDefault(); setIsDragOver(true) }
     const handleDragLeave = (e) => { e.preventDefault(); setIsDragOver(false) }
-    const handleDrop = (e) => {
+
+    const handleDrop = async (e) => {
         e.preventDefault()
         setIsDragOver(false)
-        if (e.dataTransfer.files?.[0]) setSelectedFile(e.dataTransfer.files[0])
-    }
-    const handleFileSelect = (e) => {
-        if (e.target.files?.[0]) setSelectedFile(e.target.files[0])
+        const file = e.dataTransfer.files?.[0]
+        if (file?.name.toLowerCase().endsWith('.pdf')) {
+            await uploadDocument(file)
+        }
     }
 
-    const quickActions = [
-        "Check symptoms",
-        "Medication info",
-        "Lab results"
-    ]
+    const handleFileSelect = async (e) => {
+        const file = e.target.files?.[0]
+        if (file) await uploadDocument(file)
+    }
+
+    const quickActions = ["Check symptoms", "Medication info", "Lab results"]
 
     return (
         <div className={cn(
             "w-full transition-all duration-500 ease-out",
-            isLanding
-                ? "flex flex-col items-center justify-center min-h-[60vh] px-4"
-                : "fixed bottom-0 left-0 right-0 p-4 z-40"
+            isLanding ? "flex flex-col items-center justify-center min-h-[60vh] px-4" : "fixed bottom-0 left-0 right-0 p-4 z-40"
         )}>
-            {/* Title - Landing only */}
+            {/* Title */}
             <AnimatePresence>
                 {isLanding && (
                     <motion.div
@@ -56,15 +57,27 @@ export function HeroSearch({ onSendMessage }) {
                         exit={{ opacity: 0, y: -10, transition: { duration: 0.15 } }}
                         className="text-center mb-6"
                     >
-                        <h1 className="text-3xl font-semibold text-foreground mb-2">
-                            How can I help you today?
-                        </h1>
-                        <p className="text-muted-foreground">
-                            Ask any health-related question
-                        </p>
+                        <h1 className="text-3xl font-semibold text-foreground mb-2">How can I help you today?</h1>
+                        <p className="text-muted-foreground">Ask any health-related question</p>
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Uploaded Document Badge */}
+            {uploadedDocument && (
+                <motion.div
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-3 flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm"
+                >
+                    <FileText className="w-4 h-4" />
+                    <span className="max-w-[200px] truncate">{uploadedDocument.filename}</span>
+                    <span className="text-xs text-muted-foreground">({uploadedDocument.chunk_count} chunks)</span>
+                    <button onClick={clearDocument} className="hover:bg-primary/20 rounded-full p-0.5">
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </motion.div>
+            )}
 
             {/* Search Box */}
             <motion.div
@@ -84,7 +97,7 @@ export function HeroSearch({ onSendMessage }) {
                     onDrop={handleDrop}
                 >
                     <form onSubmit={handleSubmit} className="relative flex items-center p-2">
-                        <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} accept=".pdf,.txt,.docx" />
+                        <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} accept=".pdf" />
 
                         <Button
                             type="button"
@@ -92,53 +105,34 @@ export function HeroSearch({ onSendMessage }) {
                             size="icon"
                             className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
                             onClick={() => fileInputRef.current?.click()}
+                            disabled={uploading}
                         >
-                            <Paperclip className="h-4 w-4" />
+                            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                         </Button>
 
-                        <div className="flex-1 flex flex-col px-2">
-                            <AnimatePresence>
-                                {selectedFile && (
-                                    <motion.div
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: "auto" }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        className="flex items-center gap-2 text-xs text-primary bg-primary/5 w-fit px-2 py-1 rounded mb-1"
-                                    >
-                                        <FileText className="h-3 w-3" />
-                                        <span className="max-w-[150px] truncate">{selectedFile.name}</span>
-                                        <button type="button" onClick={() => setSelectedFile(null)} className="hover:bg-primary/10 rounded-full p-0.5">
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder={uploadedDocument ? `Ask about ${uploadedDocument.filename}...` : "Ask a question..."}
+                            className="flex-1 px-2 bg-transparent border-0 outline-none text-foreground placeholder:text-muted-foreground/50 text-sm py-2"
+                        />
 
-                            <input
-                                ref={inputRef}
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder="Ask a question..."
-                                className="w-full bg-transparent border-0 outline-none text-foreground placeholder:text-muted-foreground/50 text-sm py-2"
-                            />
-                        </div>
-
-                        <Button
-                            type="submit"
-                            size="icon"
-                            disabled={!query.trim() && !selectedFile}
-                            className="h-9 w-9 shrink-0 rounded-xl"
-                        >
+                        <Button type="submit" size="icon" disabled={!query.trim()} className="h-9 w-9 shrink-0 rounded-xl">
                             <Search className="h-4 w-4" />
                         </Button>
                     </form>
+
+                    {uploadError && (
+                        <p className="px-4 pb-2 text-xs text-destructive">{uploadError}</p>
+                    )}
                 </motion.div>
             </motion.div>
 
-            {/* Quick Actions - Landing only */}
+            {/* Quick Actions */}
             <AnimatePresence>
-                {isLanding && (
+                {isLanding && !uploadedDocument && (
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1, transition: { delay: 0.1 } }}
@@ -154,6 +148,14 @@ export function HeroSearch({ onSendMessage }) {
                                 {action}
                             </button>
                         ))}
+
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-3 py-1.5 rounded-full text-sm text-primary border border-primary/30 bg-primary/5 hover:bg-primary/10 transition-colors flex items-center gap-1.5"
+                        >
+                            <Upload className="w-3.5 h-3.5" />
+                            Upload PDF
+                        </button>
                     </motion.div>
                 )}
             </AnimatePresence>

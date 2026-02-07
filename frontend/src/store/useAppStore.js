@@ -1,29 +1,33 @@
 import { create } from 'zustand'
 
 export const useAppStore = create((set) => ({
-    // UI State
+    // UI
     isSidebarOpen: false,
-    userMode: 'doctor', // 'doctor' | 'patient'
-    interactionMode: 'landing', // 'landing' | 'chat'
-    isDarkMode: false,
+    toggleSidebar: () => set((s) => ({ isSidebarOpen: !s.isSidebarOpen })),
 
-    // PDF State
-    activeCitation: null, // { url: string, page: number, highlight?: object }
-
-    // Actions
-    toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
-    setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
-    setUserMode: (mode) => set({ userMode: mode }),
-    setInteractionMode: (mode) => set({ interactionMode: mode }),
-    setActiveCitation: (citation) => set({ activeCitation: citation }),
-    closePDF: () => set({ activeCitation: null }),
-    toggleDarkMode: () => set((state) => {
-        const newMode = !state.isDarkMode
-        if (newMode) {
-            document.documentElement.classList.add('dark')
-        } else {
-            document.documentElement.classList.remove('dark')
-        }
+    // Theme
+    isDarkMode: (() => {
+        if (typeof window === 'undefined') return false
+        const saved = localStorage.getItem('theme')
+        if (saved) return saved === 'dark'
+        return window.matchMedia('(prefers-color-scheme: dark)').matches
+    })(),
+    toggleDarkMode: () => set((s) => {
+        const newMode = !s.isDarkMode
+        document.documentElement.classList.toggle('dark', newMode)
+        localStorage.setItem('theme', newMode ? 'dark' : 'light')
         return { isDarkMode: newMode }
     }),
+
+    // Interaction
+    interactionMode: 'landing', // 'landing' | 'chat'
+    setInteractionMode: (mode) => set({ interactionMode: mode }),
+
+    // PDF / Citations
+    activeCitation: null,
+    setActiveCitation: (c) => set({ activeCitation: c }),
+
+    // Uploaded Document
+    uploadedDocument: null, // { upload_id, namespace, filename, chunk_count }
+    setUploadedDocument: (doc) => set({ uploadedDocument: doc }),
 }))
