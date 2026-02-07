@@ -1,6 +1,6 @@
 """
 Process uploaded PDF: chunk, embed, upsert to Pinecone only (no local file storage).
-Supports single hybrid index or separate dense (1024) + sparse indexes.
+Supports single hybrid index or separate dense (512) + sparse indexes.
 """
 import uuid
 from typing import List, Optional
@@ -8,8 +8,6 @@ from typing import List, Optional
 from app.config import get_settings
 from app.services.pdf_service import extract_and_chunk_pdf
 from app.services.embeddings import embed_dense, embed_sparse
-from app.db.pinecone import get_pinecone_client
-import logging
 from app.db.pinecone import get_pinecone_client
 
 
@@ -124,12 +122,9 @@ async def process_and_upsert_pdf(
                     # If dimension mismatch, try upload index (if configured)
                     try:
                         settings = get_settings()
-                        logger = logging.getLogger("app.pinecone")
-                        logger.info("Dense upsert failed: %s. Attempting upload index fallback.", str(e))
                         upload_idx_name = getattr(settings, "pinecone_index_upload", None)
                         if upload_idx_name:
                             _get_dense_index(upload_idx_name).upsert(vectors=dense_records, namespace=namespace)
-                            logger.info("Dense upsert succeeded to upload index %s", upload_idx_name)
                         else:
                             raise
                     except Exception:
@@ -163,13 +158,9 @@ async def process_and_upsert_pdf(
                     # If vector dimension mismatch, attempt to fallback to upload index if provided
                     settings = get_settings()
                     upload_idx_name = getattr(settings, "pinecone_index_upload", None)
-                    logger = logging.getLogger("app.pinecone")
-                    logger.info("Primary upsert failed: %s", str(e))
                     if upload_idx_name and upload_idx_name != (index_used or ""):
                         try:
-                            logger.info("Retrying upsert to upload index %s", upload_idx_name)
                             _get_pinecone_index(upload_idx_name).upsert(vectors=records, namespace=namespace)
-                            logger.info("Upsert to upload index succeeded")
                         except Exception:
                             raise
                     else:
