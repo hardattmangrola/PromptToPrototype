@@ -71,7 +71,7 @@ class Settings(BaseSettings):
 
     # Safety & validation
     merge_confidence_threshold: float = 0.7
-    citation_required: bool = True
+    citation_required: bool = False
     log_refusals: bool = True
 
 

@@ -6,16 +6,17 @@ Handles graceful degradation if either fails.
 """
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from app.config import get_settings
-from app.services.llm.gemini_client import gemini_complete
-from app.services.llm.groq_client import groq_complete_async, GroqAsyncError
+from app.services.llm.gemini_client import gemini_complete, parse_gemini_json
+from app.services.llm.groq_client import groq_complete, parse_groq_json
+from app.services.llm.prompts import GROUNDING_SYSTEM, build_grounding_user, format_context
 
 logger = logging.getLogger("app.llm")
 
 
-async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[str, Any], dict[str, Any]]:
+async def llm_grounded_generate(query: str, chunks: list[dict]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Orchestrate dual LLM generation: Gemini-primary + Groq-fallback.
     
@@ -29,7 +30,10 @@ async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[st
       4. Require Groq success; Gemini is optional (nice-to-have for cross-model validation)
     """
     settings = get_settings()
-    context_text = "\n\n".join(c.get("text", "") for c in chunks)
+    
+    # 1. Prepare prompts
+    context_text = format_context(chunks)
+    user_msg = build_grounding_user(context_text, query)
     
     print(f"\n=== LLM Orchestration (Gemini-primary + Groq-fallback) ===")
     print(f"  Query: {query[:80]}...")
@@ -38,7 +42,8 @@ async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[st
     # Define tasks
     async def gemini_task():
         try:
-            result = await gemini_complete(query, context_text)
+            raw = await gemini_complete(GROUNDING_SYSTEM, user_msg)
+            result = parse_gemini_json(raw)
             if result.get("answer"):
                 print(f"  ✓ Gemini: {len(result['answer'])} chars")
                 return result
@@ -57,18 +62,16 @@ async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[st
     
     async def groq_task():
         try:
-            result = await groq_complete_async(query, context_text)
+            raw = await groq_complete(GROUNDING_SYSTEM, user_msg)
+            result = parse_groq_json(raw)
             if result.get("answer"):
                 print(f"  ✓ Groq: {len(result['answer'])} chars")
                 return result
             else:
                 print(f"  ⚠ Groq: empty response")
                 return None
-        except GroqAsyncError as e:
-            print(f"  ✗ Groq: {str(e)}")
-            return None
         except Exception as e:
-            print(f"  ✗ Groq: unexpected error: {str(e)}")
+            print(f"  ✗ Groq: {str(e)}")
             return None
     
     # Run in parallel
@@ -80,7 +83,8 @@ async def llm_grounded_generate(query: str, chunks: list[dict]) -> tuple[dict[st
     if not groq_out:
         print(f"  → Retrying Groq...")
         try:
-            groq_out = await groq_complete_async(query, context_text)
+            raw = await groq_complete(GROUNDING_SYSTEM, user_msg)
+            groq_out = parse_groq_json(raw)
             if groq_out and groq_out.get("answer"):
                 print(f"  ✓ Groq retry: {len(groq_out['answer'])} chars")
         except Exception as e:

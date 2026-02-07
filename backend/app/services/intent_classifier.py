@@ -45,7 +45,7 @@ class ClassificationResult:
 FORBIDDEN_PATTERNS = [
     # Diagnosis: must ask about THEIR condition
     (ForbiddenCategory.DIAGNOSIS, re.compile(
-        r"\b(do i (have|suffer from)|what (disease|condition|illness|wrong with (me|you))|diagnos(e|is|ed|is)( (me|you))?|my symptoms?|symptoms suggest|could i have|what's wrong|what do i have)\b",
+        r"\b(do i (have|suffer)|what (is|do i) (have|got)|diagnose (me|my)|my diagnosis)\b",
         re.I,
     )),
     # Personalized treatment: must ask about THEIR care

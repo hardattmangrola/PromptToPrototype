@@ -26,6 +26,7 @@ email-validator>=2.1.0
 
 # PDF processing for document upload
 pypdf>=4.0.0
+pdfplumber>=0.10.0
 
 # Local embedding fallback when Pinecone Inference unavailable (384-dim; index must match)
 sentence-transformers>=2.2.0

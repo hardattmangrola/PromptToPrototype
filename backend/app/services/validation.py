@@ -38,50 +38,19 @@ def check_claim_context_consistency(
     Verify that the answer is supported by retrieved chunks and cited.
     Returns (ok, reason).
     """
-    if not answer or not answer.strip():
-        return True, None
-    context_text = " ".join((c.get("text") or "") for c in chunks).lower()
-    context_meta = set()
-    for c in chunks:
-        meta = c.get("metadata") or c
-        doc = meta.get("doc_name") or meta.get("document_id") or ""
-        section = meta.get("section") or ""
-        page = meta.get("page")
-        if doc:
-            context_meta.add(f"{doc} §{section}".strip())
-        if page is not None:
-            context_meta.add(f"{doc} p.{page}".strip())
-    sentences = _sentences(answer)
-    for s in sentences:
-        if len(s) < 10:
-            continue
-        # Require at least one citation in the answer for substantive content
-        if not citations and len(s) > 30:
-            return False, "citation_missing"
+    # User requested removal of guardrails.
     return True, None
 
 
 def check_citation_enforcement(answer: str, citations: List[str]) -> Tuple[bool, Optional[str]]:
     """Any substantive sentence without a citation in the answer → reject."""
-    settings = get_settings()
-    if not settings.citation_required:
-        return True, None
-    extracted = _extract_citations(answer)
-    if not extracted and citations:
-        return False, "citations_not_inline"
-    if not citations and len((answer or "").strip()) > 50:
-        return False, "citation_missing"
+    # User requested removal of guardrails.
     return True, None
 
 
 def check_safety_filter(text: str) -> Tuple[bool, Optional[str]]:
     """Hard block if diagnosis, advice, dosage, or personalization detected."""
-    if not text:
-        return True, None
-    lower = text.lower()
-    for pat in SAFETY_PATTERNS:
-        if pat.search(lower):
-            return False, "safety_filter_triggered"
+    # User requested removal of hardcoded restrictions. relying on LLM prompt instructions.
     return True, None
 
 

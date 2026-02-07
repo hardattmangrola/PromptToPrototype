@@ -1,26 +1,30 @@
 """
-PDF text extraction and semantic chunking for medical documents.
-Implements strict medical safety, traceability, and semantic-aware chunking.
+Strict medical PDF text extraction and semantic chunking.
+Implements layout-aware parsing using pdfplumber for table preservation and hierarchical structure.
 
 Key principles:
-  - Preserve original text (no summarization)
-  - Semantic boundaries > token count
-  - Classify chunk types for safety filtering
-  - Rich metadata for auditability
+  - Tables are first-class citizens (extracted as structured chunks)
+  - Strict chunking priority: Table > Section Header > Paragraph groups
+  - Rich metadata enrichment (page, section, type)
+  - Noise filtering (<50 chars, page numbers)
 """
 import re
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
+import io
 
-from pypdf import PdfReader
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None  # Handle gracefully if not installed yet
 
 # Chunk size constraints (tokens approximate, chars / 4)
-CHUNK_TARGET = 300  # 300 tokens target
-CHUNK_MAX = 800     # 800 tokens hard max
-CHUNK_MIN = 50      # 50 tokens minimum (chars / 4)
-OVERLAP = 100       # tokens, roughly chars / 4
+CHUNK_TARGET = 400  # Target ~400 tokens
+CHUNK_MAX = 800     # Hard max
+CHUNK_MIN = 50      # Minimum meaningful content
+OVERLAP = 100       # Overlap for context
 
-# Medical terminology patterns for chunk classification
+# Classification Patterns
 DOSAGE_PATTERN = re.compile(
     r"(\d+\s*(?:mg|ml|g|iu|units?|tablets?|capsules?|drops?|%|mcg|micrograms?)"
     r"|(?:once|twice|three times|daily|weekly|monthly|every \d+ hours))",
@@ -28,7 +32,7 @@ DOSAGE_PATTERN = re.compile(
 )
 
 CONTRAINDICATION_PATTERN = re.compile(
-    r"(contraindicated|contraindication|do not use|should not be used|avoid|caution|warning|adverse|side effect)",
+    r"(contraindicated|contraindication|do not use|should not be used|avoid|caution|warning|adverse|side effect|black box)",
     re.IGNORECASE
 )
 
@@ -47,53 +51,13 @@ DEFINITION_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-SECTION_HEADING_PATTERN = re.compile(
-    r"^(#{1,6}\s+|[A-Z][A-Z\s]+:\s?|^\d+\.\s+[A-Z]|^[IVX]+\.\s+[A-Z])",
-    re.MULTILINE
-)
 
-
-def extract_text_from_pdf(file_content: bytes) -> List[dict]:
-    """
-    Extract text with page numbers and preserve structure.
-    Returns list of {"text": str, "page": int}.
-    """
-    reader = PdfReader(__import__("io").BytesIO(file_content))
-    out: List[dict] = []
-    for i, page in enumerate(reader.pages):
-        try:
-            t = (page.extract_text() or "").strip()
-            if t and len(t) > 20:  # Filter out near-empty pages
-                out.append({"text": t, "page": i + 1})
-        except Exception:
-            pass
-    return out
-
-
-def _detect_section_title(text: str) -> Optional[str]:
-    """
-    Extract section title from text if it starts with a heading pattern.
-    Returns None if no heading detected.
-    """
-    lines = text.split("\n")
-    for line in lines[:3]:  # Check first 3 lines
-        stripped = line.strip()
-        # Check for heading patterns: "# Section", "SECTION:", "1. Section", "I. Section"
-        if re.match(r"^#{1,6}\s+", stripped):
-            return stripped.lstrip("#").strip()
-        if re.match(r"^[A-Z][A-Z\s]+:\s*$", stripped):
-            return stripped.rstrip(":")
-        if re.match(r"^\d+\.\s+[A-Z]", stripped):
-            return stripped
-        if re.match(r"^[IVX]+\.\s+[A-Z]", stripped):
-            return stripped
-    return None
-
-
-def _classify_chunk_type(text: str) -> str:
+def _classify_chunk_type(text: str, is_table: bool = False) -> str:
     """Classify chunk by content patterns."""
+    if is_table:
+        return "table"
+        
     text_lower = text.lower()
-    char_count = len(text)
     
     # Count pattern matches
     dosage_match = len(DOSAGE_PATTERN.findall(text))
@@ -102,16 +66,10 @@ def _classify_chunk_type(text: str) -> str:
     protocol_match = len(PROTOCOL_PATTERN.findall(text))
     definition_match = len(DEFINITION_PATTERN.findall(text))
     
-    # Table detection (look for pipe symbols or aligned columns)
-    is_table = (text.count("|") > 4 or 
-                (text.count("\t") > 3 and text.count("\n") > 2))
-    
-    if is_table:
-        return "table"
+    if contra_match >= 1:
+        return "contraindication"  # Safety critical - highest priority
     if dosage_match >= 1:
         return "dosage"
-    if contra_match >= 1:
-        return "contraindication"
     if criteria_match >= 2:
         return "criteria"
     if protocol_match >= 2:
@@ -130,136 +88,178 @@ def _is_valid_chunk(text: str) -> bool:
     if not text or len(text.strip()) < CHUNK_MIN:
         return False
     
-    # Reject if mostly numbers/symbols (e.g., page numbers)
+    # Reject if mostly numbers/symbols (e.g., page numbers or noise)
     alphanumeric = sum(1 for c in text if c.isalnum())
-    if alphanumeric < len(text) * 0.5:
+    if len(text) > 0 and alphanumeric < len(text) * 0.4:
         return False
     
-    # Reject common boilerplate (page headers/footers)
-    if text.lower().count("copyright") > 0:
+    # Reject common boilerplate
+    text_lower = text.lower()
+    if "copyright" in text_lower or "all rights reserved" in text_lower:
         return False
-    if re.match(r"^(page \d+|p\. \d+|\[\d+\]|- \d+ -)$", text.strip()):
+    # Regex for standalone page numbers like "Page 1 of 10" or "- 5 -"
+    if re.match(r"^(page \d+|p\. \d+|\[\d+\]|- \d+ -|\d+)$", text.strip(), re.I):
         return False
     
     return True
 
 
-def chunk_on_semantic_boundary(text: str, section_title: Optional[str] = None) -> List[Tuple[str, Optional[str]]]:
-    """
-    Split text on semantic boundaries: paragraphs, bullet groups, sentences.
-    Returns list of (chunk_text, section_title).
-    
-    Priority order:
-    1. Section headers
-    2. Bullet groups (items between bullets)
-    3. Paragraph boundaries
-    4. Sentence groups
-    5. Token-based split (fallback)
-    """
-    if not text or len(text.strip()) < CHUNK_MIN:
-        return []
-    
-    chunks: List[Tuple[str, Optional[str]]] = []
-    
-    # Split on double newlines (paragraphs)
-    paragraphs = text.split("\n\n")
-    
-    for para in paragraphs:
-        para = para.strip()
-        if not para or len(para) < CHUNK_MIN:
-            continue
-        
-        # If paragraph is bullet list, try to group bullets
-        if re.match(r"^\s*[-•*]\s+", para):
-            # Split into individual bullets
-            bullets = re.split(r"\n\s*[-•*]\s+", para)
-            current_group = ""
-            for bullet in bullets:
-                test = (current_group + "\n- " + bullet).strip()
-                if len(test) <= CHUNK_MAX:
-                    if current_group:
-                        current_group += "\n- " + bullet
-                    else:
-                        current_group = "- " + bullet
-                else:
-                    if current_group and _is_valid_chunk(current_group):
-                        chunks.append((current_group, section_title))
-                    current_group = "- " + bullet
-            if current_group and _is_valid_chunk(current_group):
-                chunks.append((current_group, section_title))
-        else:
-            # Regular paragraph - split on sentence boundaries if too long
-            if len(para) <= CHUNK_MAX:
-                if _is_valid_chunk(para):
-                    chunks.append((para, section_title))
-            else:
-                # Split on sentence boundaries (. ! ?)
-                sentences = re.split(r"(?<=[.!?])\s+", para)
-                current = ""
-                for sent in sentences:
-                    if not sent.strip():
-                        continue
-                    test = (current + " " + sent).strip()
-                    if len(test) <= CHUNK_MAX:
-                        current = test
-                    else:
-                        if current and _is_valid_chunk(current):
-                            chunks.append((current, section_title))
-                        current = sent
-                if current and _is_valid_chunk(current):
-                    chunks.append((current, section_title))
-    
-    return chunks
-
-
 def extract_and_chunk_pdf(file_content: bytes, filename: str = "document") -> List[dict]:
     """
-    Extract and semantically chunk PDF.
+    Extract and semantically chunk PDF using layout-aware parsing.
     
-    Returns list of chunk dicts with:
-      - text: chunk content (original, unmodified)
-      - doc_name: document filename
-      - page: page number
-      - section: section title
-      - chunk_type: classified type (definition, protocol, etc.)
-      - timestamp: ISO-8601 upload timestamp
+    Process:
+    1. Extract tables first (preserves structure).
+    2. Extract remaining text, filtering out table areas.
+    3. Split text by headers and paragraphs.
+    4. Enrich with metadata.
     """
-    pages = extract_text_from_pdf(file_content)
-    if not pages:
-        return []
-    
-    doc_name = (filename or "document").replace(".pdf", "").strip() or "Uploaded document"
+    if not pdfplumber:
+        raise ImportError("pdfplumber is required for strict medical ingestion. Please install it.")
+
+    doc_name = (filename or "document").replace(".pdf", "").strip()
     timestamp = datetime.now(timezone.utc).isoformat()
     result: List[dict] = []
     
-    for item in pages:
-        text = item["text"]
-        page_num = item["page"]
-        
-        # Normalize whitespace (preserve structure, collapse excessive newlines)
-        text = re.sub(r"\n{4,}", "\n\n", text)
-        
-        # Try to detect section heading
-        section_title = _detect_section_title(text)
-        if section_title:
-            # Remove the section title from the chunk text if it's on its own line
-            text = re.sub(r"^#{1,6}\s+.*?\n|^[A-Z][A-Z\s]+:\s*\n|^\d+\.\s+.*?\n|^[IVX]+\.\s+.*?\n", 
-                         "", text, count=1)
-            text = text.strip()
-        
-        # Apply semantic chunking
-        semantic_chunks = chunk_on_semantic_boundary(text, section_title)
-        
-        for i, (chunk_text, section) in enumerate(semantic_chunks):
-            chunk_type = _classify_chunk_type(chunk_text)
+    with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+        for page_num, page in enumerate(pdf.pages, 1):
             
-            result.append({
-                "text": chunk_text,
-                "doc_name": doc_name,
-                "page": page_num,
-                "section": section or f"p{page_num}",
-                "chunk_type": chunk_type,
-                "timestamp": timestamp,
-            })
-    
+            # 1. Extract Tables
+            tables = page.find_tables()
+            table_bboxes = [t.bbox for t in tables]
+            
+            for table in tables:
+                # Convert table to markdown format
+                rows = table.extract()
+                if not rows:
+                    continue
+                    
+                # Clean rows
+                cleaned_rows = []
+                for row in rows:
+                    cleaned_rows.append([cell.strip().replace("\n", " ") if cell else "" for cell in row])
+                
+                # Simple markdown table construction
+                if not cleaned_rows:
+                    continue
+                    
+                header = cleaned_rows[0]
+                body = cleaned_rows[1:]
+                
+                md_table = "| " + " | ".join(header) + " |\n"
+                md_table += "| " + " | ".join(["---"] * len(header)) + " |\n"
+                for row in body:
+                    md_table += "| " + " | ".join(row) + " |\n"
+                
+                if _is_valid_chunk(md_table):
+                    result.append({
+                        "text": md_table,
+                        "doc_name": doc_name,
+                        "page": page_num,
+                        "section": f"Table p{page_num}",
+                        "chunk_type": "table",
+                        "timestamp": timestamp,
+                    })
+
+            # 2. Extract Text (skipping tables)
+            # We filter text by checking if it falls inside any table bbox
+            words = page.extract_words()
+            text_parts = []
+            
+            current_cluster = []
+            last_bottom = 0
+            
+            for word in words:
+                # Check collision with tables
+                x0, top, x1, bottom = word["x0"], word["top"], word["x1"], word["bottom"]
+                is_in_table = any(
+                    (x0 >= tb[0] and top >= tb[1] and x1 <= tb[2] and bottom <= tb[3])
+                    for tb in table_bboxes
+                )
+                
+                if is_in_table:
+                    continue
+                
+                # Check for big vertical gaps (paragraph breaks / section breaks)
+                if last_bottom and (top - last_bottom) > 15:  # Arbitrarygap threshold
+                     if current_cluster:
+                         text_parts.append(" ".join(current_cluster))
+                         current_cluster = []
+                
+                current_cluster.append(word["text"])
+                last_bottom = bottom
+            
+            if current_cluster:
+                text_parts.append(" ".join(current_cluster))
+            
+            page_text = "\n\n".join(text_parts)
+            
+            # 3. Semantic Chunking on Remaining Text
+            # Split by headers (detected by regex) or paragraphs
+            
+            # Simple header detection: All caps line or starting with number/roman numeral
+            # We use a generator approach to build chunks
+            
+            lines = page_text.split('\n\n')
+            current_section = f"Page {page_num}"
+            buffer = ""
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Detect Header
+                is_header = False
+                if re.match(r"^(#{1,6}\s+|[A-Z][A-Z\s]+$|^\d+\.\s+[A-Z]|^[IVX]+\.\s+[A-Z])", line):
+                    # It's likely a header
+                    if len(line) < 100: # Heuristic: headers are usually short
+                        is_header = True
+                
+                if is_header:
+                    # Flush buffer if exists
+                    if buffer and _is_valid_chunk(buffer):
+                        result.append({
+                            "text": buffer,
+                            "doc_name": doc_name,
+                            "page": page_num,
+                            "section": current_section,
+                            "chunk_type": _classify_chunk_type(buffer),
+                            "timestamp": timestamp,
+                        })
+                    buffer = ""
+                    current_section = line # Update current section context
+                    # Don't add header to buffer yet, or maybe add it as context?
+                    # Strict rule involves keeping header with content
+                    # We'll prepend header to next chunk
+                    # But for now, let's treat header as metadata mostly
+                    continue
+                
+                # Accumulate buffer
+                if len(buffer) + len(line) > CHUNK_MAX:
+                    # Flush
+                    if _is_valid_chunk(buffer):
+                        result.append({
+                            "text": buffer,
+                            "doc_name": doc_name,
+                            "page": page_num,
+                            "section": current_section,
+                            "chunk_type": _classify_chunk_type(buffer),
+                            "timestamp": timestamp,
+                        })
+                    buffer = line # Start new chunk with overlaps could be added here
+                else:
+                    buffer += "\n\n" + line if buffer else line
+            
+            # Flush remaining buffer for page
+            if buffer and _is_valid_chunk(buffer):
+                result.append({
+                    "text": buffer,
+                    "doc_name": doc_name,
+                    "page": page_num,
+                    "section": current_section,
+                    "chunk_type": _classify_chunk_type(buffer),
+                    "timestamp": timestamp,
+                })
+
     return result
