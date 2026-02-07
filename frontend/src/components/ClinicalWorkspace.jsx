@@ -2,38 +2,93 @@ import { Layout } from "@/components/layout/Layout"
 import { HeroSearch } from "@/components/landing/HeroSearch"
 import { ChatArea } from "@/components/chat/ChatArea"
 import { PDFViewer } from "@/components/reference/PDFViewer"
+import { SettingsModal } from "@/components/layout/SettingsModal"
+import { PatientContextModal } from "@/components/PatientContextModal"
 import { useAppStore } from "@/store/useAppStore"
 import { AnimatePresence, motion } from "framer-motion"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useMedicalChat } from "@/hooks/use-medical-chat"
-import { X } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { EyeOff } from "lucide-react"
+import { cn } from "@/lib/utils"
+import * as React from "react"
 
 export function ClinicalWorkspace() {
-    const { interactionMode, activeCitation, closePDF } = useAppStore()
+    const { interactionMode, activeCitation, closePDF, activeChatId, setPatientContext, getActiveChat } = useAppStore()
     const isMobile = useIsMobile()
-    const { messages, isLoading, sendMessage } = useMedicalChat()
+    const [showContextModal, setShowContextModal] = React.useState(false)
+    const { messages, isLoading, sendMessage, isIncognito, triggerContextModal } = useMedicalChat()
 
     const showChat = interactionMode === 'chat'
     const showPDF = !!activeCitation
 
+    const handleContextSubmit = (context) => {
+        if (activeChatId) {
+            setPatientContext(activeChatId, context)
+        }
+        setShowContextModal(false)
+    }
+
+    // Listen for context modal trigger from chat hook
+    React.useEffect(() => {
+        if (triggerContextModal) {
+            const activeChat = getActiveChat()
+            if (!activeChat?.isIncognito && !activeChat?.patientContext) {
+                setShowContextModal(true)
+            }
+        }
+    }, [triggerContextModal, getActiveChat, activeChatId])
+
     return (
         <Layout>
-            <div className="relative h-full w-full flex overflow-hidden">
+            {/* Settings Modal */}
+            <SettingsModal />
+
+            {/* Patient Context Modal */}
+            <PatientContextModal
+                isOpen={showContextModal}
+                onClose={() => setShowContextModal(false)}
+                onSubmit={handleContextSubmit}
+            />
+
+
+            {/* Incognito Banner */}
+            <AnimatePresence>
+                {isIncognito && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="absolute top-14 left-0 right-0 z-30 flex justify-center pointer-events-none"
+                    >
+                        <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-purple-500/20 to-violet-500/20 border border-purple-500/30 backdrop-blur-sm">
+                            <EyeOff className="w-3.5 h-3.5 text-purple-400" />
+                            <span className="text-xs text-purple-300 font-medium">Incognito Mode</span>
+                            <span className="text-[10px] text-purple-400/70">• Chat not saved</span>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <div className={cn(
+                "relative h-full w-full flex overflow-hidden transition-all duration-500",
+                isIncognito && "incognito-mode"
+            )}>
                 {/* Main Chat Column */}
-                <div className={`flex-1 flex flex-col relative h-full transition-all duration-300
-          ${showPDF && !isMobile ? 'pr-0' : ''}`}
-                >
+                <div className={cn(
+                    "flex-1 flex flex-col relative h-full transition-all duration-300",
+                    showPDF && !isMobile && "pr-0"
+                )}>
                     {/* Chat Messages */}
                     {showChat && (
                         <ChatArea
                             messages={messages}
                             isLoading={isLoading}
+                            isIncognito={isIncognito}
                         />
                     )}
 
                     {/* Hero Search (Landing or Bottom Bar) */}
-                    <HeroSearch onSendMessage={sendMessage} />
+                    <HeroSearch onSendMessage={sendMessage} isIncognito={isIncognito} />
                 </div>
 
                 {/* PDF Side Panel - Desktop */}

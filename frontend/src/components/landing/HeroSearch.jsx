@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { useAppStore } from "@/store/useAppStore"
 import { useDocumentUpload } from "@/hooks/use-document-upload"
 
-export function HeroSearch({ onSendMessage }) {
+export function HeroSearch({ onSendMessage, isIncognito = false }) {
     const { interactionMode } = useAppStore()
     const { uploadDocument, clearDocument, uploading, uploadedDocument, error: uploadError } = useDocumentUpload()
 
@@ -90,7 +90,8 @@ export function HeroSearch({ onSendMessage }) {
                     className={cn(
                         "glass-panel rounded-2xl transition-shadow",
                         isDragOver && "ring-2 ring-primary/50",
-                        !isLanding && "shadow-xl"
+                        !isLanding && "shadow-xl",
+                        isIncognito && "border-purple-500/30 ring-1 ring-purple-500/20"
                     )}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}

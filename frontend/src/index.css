@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -135,5 +135,20 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Incognito Mode */
+  .incognito-mode {
+    background: linear-gradient(135deg,
+        hsl(270, 30%, 97%) 0%,
+        hsl(280, 25%, 95%) 50%,
+        hsl(260, 20%, 97%) 100%);
+  }
+
+  .dark .incognito-mode {
+    background: linear-gradient(135deg,
+        hsl(270, 30%, 8%) 0%,
+        hsl(280, 35%, 12%) 50%,
+        hsl(260, 25%, 10%) 100%);
   }
 }

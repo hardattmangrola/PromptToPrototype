@@ -9,10 +9,12 @@ import {
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useAuth } from "@/auth/AuthProvider"
-import { LogOut, User, Settings } from "lucide-react"
+import { useAppStore } from "@/store/useAppStore"
+import { LogOut, User, Settings, Shield } from "lucide-react"
 
 export function ProfileMenu() {
     const { user, logout } = useAuth()
+    const { toggleSettings } = useAppStore()
 
     if (!user) return null
 
@@ -20,6 +22,8 @@ export function ProfileMenu() {
     const initials = user.full_name
         ? user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)
         : "U"
+
+    const isDoctor = user.role === 'doctor'
 
     return (
         <DropdownMenu>
@@ -29,12 +33,24 @@ export function ProfileMenu() {
                         <AvatarImage src={user.avatar_url} alt={user.full_name} />
                         <AvatarFallback className="bg-sky-500/20 text-sky-700 dark:text-sky-300">{initials}</AvatarFallback>
                     </Avatar>
+                    {isDoctor && (
+                        <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center">
+                            <Shield className="w-2.5 h-2.5 text-white" />
+                        </span>
+                    )}
                 </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56 glass-panel" align="end" forceMount>
                 <DropdownMenuLabel className="font-normal">
                     <div className="flex flex-col space-y-1">
-                        <p className="text-sm font-medium leading-none">{user.full_name}</p>
+                        <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium leading-none">{user.full_name}</p>
+                            {isDoctor && (
+                                <span className="text-[10px] bg-emerald-500/20 text-emerald-500 px-1.5 py-0.5 rounded-full uppercase font-medium">
+                                    Doctor
+                                </span>
+                            )}
+                        </div>
                         <p className="text-xs leading-none text-muted-foreground">
                             {user.email}
                         </p>
@@ -45,7 +61,7 @@ export function ProfileMenu() {
                     <User className="mr-2 h-4 w-4" />
                     <span>Profile</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer focus:bg-white/20">
+                <DropdownMenuItem className="cursor-pointer focus:bg-white/20" onClick={toggleSettings}>
                     <Settings className="mr-2 h-4 w-4" />
                     <span>Settings</span>
                 </DropdownMenuItem>

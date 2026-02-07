@@ -112,6 +112,7 @@ class ApiService {
                 top_k: options.topK || 5,
                 upload_id: options.uploadId,
                 namespace: options.namespace,
+                context: options.context, // NEW: Patient context
             }),
         })
     }

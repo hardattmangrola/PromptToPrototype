@@ -61,26 +61,49 @@ const transformCitations = (citations = []) => {
 }
 
 export function useMedicalChat() {
-    const { setInteractionMode, interactionMode } = useAppStore()
+    const {
+        setInteractionMode,
+        interactionMode,
+        activeChatId,
+        updateChatMessages,
+        getActiveChat,
+        incognitoChat,
+    } = useAppStore()
     const { isOffline, user } = useAuth()
 
-    const [messages, setMessages] = React.useState([])
     const [isLoading, setIsLoading] = React.useState(false)
+    const [triggerContextModal, setTriggerContextModal] = React.useState(false)
 
     const userRole = user?.role || 'patient'
 
+    // Get messages from active chat
+    const activeChat = getActiveChat()
+    const messages = activeChat?.messages || []
+    const isIncognito = incognitoChat?.id === activeChatId
+
     const sendMessage = React.useCallback(async (text, file) => {
         if (!text && !file) return
+        if (!activeChatId) return
 
         const userMsg = { id: Date.now(), role: 'user', content: text, file: file ? { name: file.name } : null }
-        setMessages(prev => [...prev, userMsg])
+        const currentMessages = getActiveChat()?.messages || []
+        const newMessages = [...currentMessages, userMsg]
+
+        updateChatMessages(activeChatId, newMessages)
 
         if (interactionMode !== 'chat') setInteractionMode('chat')
+
+        // Trigger context modal on first message if needed
+        const activeChat = getActiveChat()
+        if (!isIncognito && !activeChat?.isIncognito && !activeChat?.patientContext && currentMessages.length === 0) {
+            setTriggerContextModal(true)
+        }
 
         setIsLoading(true)
         const aiMsgId = Date.now() + 1
 
-        setMessages(prev => [...prev, {
+        // Add loading AI message
+        updateChatMessages(activeChatId, [...newMessages, {
             id: aiMsgId,
             role: 'ai',
             content: '',
@@ -93,69 +116,82 @@ export function useMedicalChat() {
         }])
 
         if (isOffline || !api.accessToken) {
-            await simulateResponse(aiMsgId, userRole)
+            await simulateResponse(aiMsgId, userRole, newMessages)
         } else {
-            await fetchRAGResponse(text, aiMsgId)
+            await fetchRAGResponse(text, aiMsgId, newMessages)
         }
 
         setIsLoading(false)
-    }, [interactionMode, isOffline, userRole, setInteractionMode])
+    }, [activeChatId, interactionMode, isOffline, userRole, setInteractionMode, updateChatMessages, getActiveChat])
 
-    const simulateResponse = async (aiMsgId, role) => {
+    const simulateResponse = async (aiMsgId, role, prevMessages) => {
         const mock = generateMockResponse(role)
 
-        setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, reasoning: mock.reasoning } : m))
+        // Update reasoning
+        const msgs1 = [...prevMessages, { id: aiMsgId, role: 'ai', reasoning: mock.reasoning, content: '', isLoading: true }]
+        updateChatMessages(activeChatId, msgs1)
         await new Promise(r => setTimeout(r, 600))
 
+        // Stream content
         for (let i = 0; i <= mock.content.length; i++) {
-            setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-                ...m,
+            const msg = {
+                id: aiMsgId,
+                role: 'ai',
+                reasoning: mock.reasoning,
                 content: mock.content.slice(0, i),
                 confidence: mock.confidence,
                 citations: mock.citations,
                 limitations: mock.limitations,
                 isLoading: i < mock.content.length
-            } : m))
+            }
+            updateChatMessages(activeChatId, [...prevMessages, msg])
             if (i < mock.content.length) await new Promise(r => setTimeout(r, 2))
         }
     }
 
-    const fetchRAGResponse = async (query, aiMsgId) => {
+    const fetchRAGResponse = async (query, aiMsgId, prevMessages) => {
         try {
             const uploadedDoc = useAppStore.getState().uploadedDocument
+            const activeChat = getActiveChat()
+
             const response = await api.query(query, {
                 topK: 5,
                 uploadId: uploadedDoc?.upload_id,
+                context: activeChat?.patientContext, // NEW: Pass patient context
             })
 
             // Check if refused
             if (response.refused) {
-                setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-                    ...m,
+                const msg = {
+                    id: aiMsgId,
+                    role: 'ai',
                     content: response.message,
                     reasoning: `Query analysis: ${response.reason || 'Out of scope'}`,
                     refused: true,
                     isLoading: false,
-                } : m))
+                }
+                updateChatMessages(activeChatId, [...prevMessages, msg])
                 return
             }
 
             // Success response with citations
-            setMessages(prev => prev.map(m => m.id === aiMsgId ? {
-                ...m,
+            const msg = {
+                id: aiMsgId,
+                role: 'ai',
                 content: response.answer,
                 reasoning: 'Retrieved and validated from medical documents',
                 confidence: response.confidence ? Math.round(response.confidence * 100) : 90,
                 citations: transformCitations(response.citations),
                 limitations: response.limitations,
                 isLoading: false,
-            } : m))
+            }
+            updateChatMessages(activeChatId, [...prevMessages, msg])
 
         } catch (error) {
             console.error('RAG error:', error)
-            await simulateResponse(aiMsgId, userRole)
+            await simulateResponse(aiMsgId, userRole, prevMessages)
         }
     }
 
-    return { messages, isLoading, sendMessage, userRole }
+    return { messages, isLoading, sendMessage, userRole, isIncognito, triggerContextModal }
 }
