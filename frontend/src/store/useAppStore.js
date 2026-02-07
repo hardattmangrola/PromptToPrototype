@@ -41,7 +41,6 @@ export const useAppStore = create(
                     messages: [],
                     isIncognito,
                     createdAt: Date.now(),
-                    patientContext: null,
                 }
                 set((s) => ({
                     chats: isIncognito ? s.chats : [newChat, ...s.chats],
@@ -94,10 +93,6 @@ export const useAppStore = create(
                     ),
                 }
             }),
-
-            setPatientContext: (id, context) => set((s) => ({
-                chats: s.chats.map(c => c.id === id ? { ...c, patientContext: context } : c),
-            })),
 
             clearAllChats: () => set({ chats: [], activeChatId: null, incognitoChat: null, interactionMode: 'landing' }),
 

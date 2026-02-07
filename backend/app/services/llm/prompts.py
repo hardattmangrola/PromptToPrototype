@@ -23,7 +23,7 @@ GROUNDING_USER_TEMPLATE = """Context from provided documents:
 
 User question: {query}
 
-Respond with JSON only: {"answer": "...", "citations": ["..."]}"""
+Respond with JSON only: {{"answer": "...", "citations": ["..."]}}"""
 
 
 def build_grounding_user(context: str, query: str) -> str:

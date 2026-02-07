@@ -3,7 +3,6 @@ import { HeroSearch } from "@/components/landing/HeroSearch"
 import { ChatArea } from "@/components/chat/ChatArea"
 import { PDFViewer } from "@/components/reference/PDFViewer"
 import { SettingsModal } from "@/components/layout/SettingsModal"
-import { PatientContextModal } from "@/components/PatientContextModal"
 import { useAppStore } from "@/store/useAppStore"
 import { AnimatePresence, motion } from "framer-motion"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -13,43 +12,17 @@ import { cn } from "@/lib/utils"
 import * as React from "react"
 
 export function ClinicalWorkspace() {
-    const { interactionMode, activeCitation, closePDF, activeChatId, setPatientContext, getActiveChat } = useAppStore()
+    const { interactionMode, activeCitation, closePDF, activeChatId } = useAppStore()
     const isMobile = useIsMobile()
-    const [showContextModal, setShowContextModal] = React.useState(false)
-    const { messages, isLoading, sendMessage, isIncognito, triggerContextModal } = useMedicalChat()
+    const { messages, isLoading, sendMessage, isIncognito } = useMedicalChat()
 
     const showChat = interactionMode === 'chat'
     const showPDF = !!activeCitation
-
-    const handleContextSubmit = (context) => {
-        if (activeChatId) {
-            setPatientContext(activeChatId, context)
-        }
-        setShowContextModal(false)
-    }
-
-    // Listen for context modal trigger from chat hook
-    React.useEffect(() => {
-        if (triggerContextModal) {
-            const activeChat = getActiveChat()
-            if (!activeChat?.isIncognito && !activeChat?.patientContext) {
-                setShowContextModal(true)
-            }
-        }
-    }, [triggerContextModal, getActiveChat, activeChatId])
 
     return (
         <Layout>
             {/* Settings Modal */}
             <SettingsModal />
-
-            {/* Patient Context Modal */}
-            <PatientContextModal
-                isOpen={showContextModal}
-                onClose={() => setShowContextModal(false)}
-                onSubmit={handleContextSubmit}
-            />
-
 
             {/* Incognito Banner */}
             <AnimatePresence>
