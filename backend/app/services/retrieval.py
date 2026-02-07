@@ -136,9 +136,20 @@ async def hybrid_query(
             # If index expects a different dimension, try the upload index (if configured)
             settings = get_settings()
             upload_idx = getattr(settings, "pinecone_index_upload", None)
+            logger = None
+            try:
+                import logging
+
+                logger = logging.getLogger("app.pinecone")
+            except Exception:
+                logger = None
+            if logger:
+                logger.info("Query to primary index failed: %s", str(e))
             if upload_idx:
                 try:
                     idx2 = _get_pinecone_index(upload_idx)
+                    if logger:
+                        logger.info("Retrying query against upload index %s", upload_idx)
                     resp = idx2.query(**query_params)
                     matches = list(resp.matches or [])
                 except Exception:
