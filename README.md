@@ -1,11 +1,13 @@
-# Healthcare RAG Assistant
+# Clinical AI
 
 ## Project Overview
 
-The Healthcare RAG Assistant is a sophisticated application designed to provide accurate, context-aware answers to medical queries. It leverages Retrieval-Augmented Generation (RAG) to ground its responses in verified medical documents provided by the user. The system ensures high reliability by strictly adhering to the context of uploaded documents and refusing to hallucinate information.
+Clinical AI is a sophisticated application designed to provide accurate, context-aware answers to medical queries. It leverages Retrieval-Augmented Generation (RAG) to ground its responses in verified medical documents provided by the user. The system ensures high reliability by strictly adhering to the context of uploaded documents and refusing to hallucinate information.
 
 Users can upload medical PDFs, which the system processes and indexes. Subsequent queries are answered by retrieving relevant sections from these documents and using a Large Language Model (LLM) to synthesize a response. The application features a modern, responsive user interface that supports side-by-side document viewing and citation verification.
 
+## System Archiecture
+![Sys-Arch](https://github.com/hardattmangrola/PromptToPrototype/blob/e64afb637122bd17a6da3fa6d683b80dca383a1d/sys-arch.png)
 ## Project Flow
 
 1.  **Authentication**: Users register or log in to the platform. Role-based access control distinguishes between standard users and medical professionals.
