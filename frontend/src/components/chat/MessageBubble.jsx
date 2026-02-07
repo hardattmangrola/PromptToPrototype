@@ -1,17 +1,19 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronDown, User, Bot, Loader2, FileText } from "lucide-react"
+import { ChevronDown, User, Bot, Loader2, FileText, AlertTriangle, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { MarkdownRenderer } from "./MarkdownRenderer"
 
 /**
  * MessageBubble Component
  * Renders user or AI messages with optional reasoning accordion.
+ * Shows special styling for refusals and limitations.
  */
 export function MessageBubble({ message }) {
     const [showReasoning, setShowReasoning] = React.useState(false)
     const isUser = message.role === 'user'
     const isAI = message.role === 'ai'
+    const isRefused = message.refused
 
     return (
         <motion.div
@@ -27,9 +29,13 @@ export function MessageBubble({ message }) {
                 "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
                 isUser
                     ? "bg-gradient-to-br from-primary to-secondary text-white"
-                    : "glass-panel text-primary"
+                    : isRefused
+                        ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+                        : "glass-panel text-primary"
             )}>
-                {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                {isUser ? <User className="w-4 h-4" /> :
+                    isRefused ? <AlertTriangle className="w-4 h-4" /> :
+                        <Bot className="w-4 h-4" />}
             </div>
 
             {/* Message Content */}
@@ -52,19 +58,29 @@ export function MessageBubble({ message }) {
 
                 {/* AI Message */}
                 {isAI && (
-                    <div className="glass-panel rounded-2xl rounded-tl-md overflow-hidden">
+                    <div className={cn(
+                        "rounded-2xl rounded-tl-md overflow-hidden",
+                        isRefused
+                            ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50"
+                            : "glass-panel"
+                    )}>
                         {/* Reasoning Accordion */}
                         {message.reasoning && (
                             <button
                                 onClick={() => setShowReasoning(!showReasoning)}
-                                className="w-full flex items-center justify-between px-4 py-2 text-xs text-muted-foreground hover:bg-white/10 dark:hover:bg-slate-700/30 transition-colors border-b border-white/10"
+                                className={cn(
+                                    "w-full flex items-center justify-between px-4 py-2 text-xs transition-colors border-b",
+                                    isRefused
+                                        ? "text-amber-700 dark:text-amber-300 hover:bg-amber-100/50 dark:hover:bg-amber-900/30 border-amber-200 dark:border-amber-800/50"
+                                        : "text-muted-foreground hover:bg-white/10 dark:hover:bg-slate-700/30 border-white/10"
+                                )}
                             >
                                 <span className="flex items-center gap-2">
                                     <Loader2 className={cn(
                                         "w-3 h-3",
                                         message.isLoading && !message.content && "animate-spin"
                                     )} />
-                                    Thinking Process...
+                                    {isRefused ? "Refusal Reason" : "Thinking Process..."}
                                 </span>
                                 <ChevronDown className={cn(
                                     "w-4 h-4 transition-transform",
@@ -81,7 +97,12 @@ export function MessageBubble({ message }) {
                                     exit={{ height: 0, opacity: 0 }}
                                     className="overflow-hidden"
                                 >
-                                    <pre className="px-4 py-3 text-xs text-muted-foreground font-mono bg-muted/30 whitespace-pre-wrap">
+                                    <pre className={cn(
+                                        "px-4 py-3 text-xs font-mono whitespace-pre-wrap",
+                                        isRefused
+                                            ? "bg-amber-100/50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300"
+                                            : "bg-muted/30 text-muted-foreground"
+                                    )}>
                                         {message.reasoning}
                                     </pre>
                                 </motion.div>
@@ -102,8 +123,16 @@ export function MessageBubble({ message }) {
                                         citations={message.citations || []}
                                     />
 
+                                    {/* Limitations Disclaimer */}
+                                    {message.limitations && !isRefused && (
+                                        <div className="mt-4 pt-3 border-t border-border/50 flex items-start gap-2 text-xs text-muted-foreground">
+                                            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                            <p>{message.limitations}</p>
+                                        </div>
+                                    )}
+
                                     {/* Confidence Indicator */}
-                                    {message.confidence > 0 && (
+                                    {message.confidence > 0 && !isRefused && (
                                         <div className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2">
                                             <span className="text-xs text-muted-foreground">Confidence:</span>
                                             <div className="flex-1 h-1.5 bg-muted/30 rounded-full overflow-hidden max-w-[120px]">

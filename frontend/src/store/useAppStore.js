@@ -26,6 +26,7 @@ export const useAppStore = create((set) => ({
     // PDF / Citations
     activeCitation: null,
     setActiveCitation: (c) => set({ activeCitation: c }),
+    closePDF: () => set({ activeCitation: null }),
 
     // Uploaded Document
     uploadedDocument: null, // { upload_id, namespace, filename, chunk_count }

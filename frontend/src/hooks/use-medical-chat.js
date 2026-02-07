@@ -43,12 +43,25 @@ const generateMockResponse = (role) => {
         reasoning,
         content: isDoctor ? doctorContent : patientContent,
         confidence: isDoctor ? 92 : 85,
-        citations: isDoctor ? [{ doc_name: "Clinical Guidelines", page: 23 }] : []
+        citations: isDoctor ? [{ id: 1, source: "Clinical Guidelines", page: 23 }] : [],
+        limitations: "This is demo mode. Please consult a healthcare provider for personalized advice."
     }
 }
 
+// Transform backend citation format to frontend format
+const transformCitations = (citations = []) => {
+    return citations.map((c, i) => ({
+        id: i + 1,
+        url: c.doc_name ? `/documents/${encodeURIComponent(c.doc_name)}` : null,
+        page: c.page || 1,
+        source: c.doc_name || 'Document',
+        snippet: c.snippet,
+        section: c.section,
+    }))
+}
+
 export function useMedicalChat() {
-    const { setInteractionMode, interactionMode, uploadedDocument } = useAppStore()
+    const { setInteractionMode, interactionMode } = useAppStore()
     const { isOffline, user } = useAuth()
 
     const [messages, setMessages] = React.useState([])
@@ -75,6 +88,7 @@ export function useMedicalChat() {
             confidence: 0,
             citations: [],
             refused: false,
+            limitations: null,
             isLoading: true
         }])
 
@@ -85,7 +99,7 @@ export function useMedicalChat() {
         }
 
         setIsLoading(false)
-    }, [interactionMode, isOffline, userRole, setInteractionMode, uploadedDocument])
+    }, [interactionMode, isOffline, userRole, setInteractionMode])
 
     const simulateResponse = async (aiMsgId, role) => {
         const mock = generateMockResponse(role)
@@ -99,6 +113,7 @@ export function useMedicalChat() {
                 content: mock.content.slice(0, i),
                 confidence: mock.confidence,
                 citations: mock.citations,
+                limitations: mock.limitations,
                 isLoading: i < mock.content.length
             } : m))
             if (i < mock.content.length) await new Promise(r => setTimeout(r, 2))
@@ -130,8 +145,8 @@ export function useMedicalChat() {
                 ...m,
                 content: response.answer,
                 reasoning: 'Retrieved and validated from medical documents',
-                confidence: response.confidence ? response.confidence * 100 : 90,
-                citations: response.citations || [],
+                confidence: response.confidence ? Math.round(response.confidence * 100) : 90,
+                citations: transformCitations(response.citations),
                 limitations: response.limitations,
                 isLoading: false,
             } : m))
