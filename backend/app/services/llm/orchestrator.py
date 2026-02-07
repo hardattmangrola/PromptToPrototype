@@ -29,5 +29,25 @@ async def llm_grounded_generate(
         raw = await gemini_complete(GROUNDING_SYSTEM, user_msg)
         return parse_gemini_json(raw)
 
-    groq_out, gemini_out = await asyncio.gather(groq_task(), gemini_task())
+    groq_out, gemini_out = {}, {}
+    results = await asyncio.gather(groq_task(), gemini_task(), return_exceptions=True)
+    
+    # Handle Groq result
+    if isinstance(results[0], Exception):
+        print(f"Groq task failed: {results[0]}")
+        groq_out = {}
+    else:
+        groq_out = results[0]
+
+    # Handle Gemini result
+    if isinstance(results[1], Exception):
+        print(f"Gemini task failed: {results[1]}")
+        gemini_out = {}
+    else:
+        gemini_out = results[1]
+
+    # If both failed, raise an exception or handle it (though validation pipeline might handle empty dicts)
+    if not groq_out and not gemini_out:
+        raise RuntimeError("Both LLM providers failed to generate a response.")
+
     return groq_out, gemini_out

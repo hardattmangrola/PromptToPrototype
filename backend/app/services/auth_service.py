@@ -42,20 +42,42 @@ async def get_user_by_id(user_id: str) -> Optional[UserInDB]:
 
 
 async def authenticate_user(email: str, password: str) -> Optional[UserInDB]:
-    """Verify credentials and return user or None."""
+    """Verify credentials and return user, or None if invalid. Raises specific errors for debugging."""
+    if not email or not password:
+        return None
     user = await get_user_by_email(email)
-    if not user or user.disabled:
+    if not user:
         return None
+    if user.disabled:
+        return None  # User exists but is disabled
     if not verify_password(password, user.hashed_password):
-        return None
+        return None  # Password mismatch
     return user
 
 
 async def login_for_tokens(email: str, password: str) -> Token:
-    """Authenticate and return access + refresh tokens."""
+    """Authenticate and return access + refresh tokens. Validates input and user state."""
+    # Input validation
+    if not email or not email.strip():
+        raise UnauthorizedError("Email is required")
+    if not password or not password.strip():
+        raise UnauthorizedError("Password is required")
+    
+    email = email.strip().lower()
+    
+    # Check if user exists
+    user_exists = await get_user_by_email(email)
+    if not user_exists:
+        raise UnauthorizedError("User not found. Please register first.")
+    
+    # Check if disabled
+    if user_exists.disabled:
+        raise UnauthorizedError("Account is disabled. Contact support.")
+    
+    # Authenticate
     user = await authenticate_user(email, password)
     if not user:
-        raise UnauthorizedError("Invalid email or password")
+        raise UnauthorizedError("Invalid password. Please try again.")
     settings = get_settings()
     access = create_access_token(subject=str(user.id), role=user.role)
     refresh = create_refresh_token(subject=str(user.id), role=user.role)
@@ -92,20 +114,41 @@ async def refresh_tokens(refresh_token: str) -> Token:
 
 
 async def create_user(data: UserCreate) -> UserInDB:
-    """Create a new user (registration). Email must be unique."""
-    existing = await get_user_by_email(data.email)
+    """Create a new user (registration). Validates input and ensures email uniqueness."""
+    # Validate email
+    if not data.email or not data.email.strip():
+        raise ValueError("Email is required")
+    
+    # Validate password
+    if not data.password or len(data.password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    
+    # Validate role
+    if data.role not in ["patient", "doctor"]:
+        raise ValueError("Role must be 'patient' or 'doctor'")
+    
+    # Validate full_name if provided
+    if data.full_name is not None and len(data.full_name.strip()) == 0:
+        raise ValueError("Full name cannot be empty if provided")
+    
+    # Check if email already exists
+    email_lower = data.email.lower().strip()
+    existing = await get_user_by_email(email_lower)
     if existing:
-        raise ValueError("Email already registered")
+        raise ValueError("Email already registered. Please login or use a different email.")
+    
+    # Create user document
     internal = UserCreateInternal(
-        **data.model_dump(),
+        **data.model_dump(exclude={"email"}),
+        email=email_lower,
         hashed_password=get_password_hash(data.password),
     )
     col = get_user_collection()
     doc = {
-        "email": internal.email.lower(),
+        "email": internal.email,
         "hashed_password": internal.hashed_password,
         "role": internal.role,
-        "full_name": internal.full_name,
+        "full_name": (internal.full_name or "").strip() or None,
         "disabled": False,
     }
     result = await col.insert_one(doc)

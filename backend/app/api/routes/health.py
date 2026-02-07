@@ -16,7 +16,8 @@ async def ready():
     try:
         from app.db.mongodb import get_db
         db = get_db()
-        await db.list_collections().to_list(1)
+        # Motor's list_collection_names() returns an awaitable
+        collections = await db.list_collection_names()
         return {"status": "ready", "mongodb": "connected"}
     except Exception as e:
         return {"status": "degraded", "mongodb": str(e)}
